@@ -1,0 +1,1239 @@
+<meta charset="utf-8">
+<title>Aiven Agent Orchestrator</title>
+<meta name="description" content="Command-center prototype for coordinating, governing, and auditing enterprise AI agents.">
+<style>
+  :root {
+    --bg: #0a0e16;
+    --bg-grid: #0d1220;
+    --surface: #121a29;
+    --surface-raised: #17202f;
+    --surface-sunken: #0d131f;
+    --border: #24304a;
+    --border-soft: #1a2235;
+    --text: #edf1f8;
+    --text-dim: #b7c0d1;
+    --text-mute: #7d879c;
+    --accent: #e7a838;
+    --accent-dim: #b0842f;
+    --accent-soft: rgba(231, 168, 56, 0.12);
+    --accent-soft-2: rgba(231, 168, 56, 0.22);
+    --running: #52b3e6;
+    --running-soft: rgba(82, 179, 230, 0.14);
+    --success: #43c08c;
+    --success-soft: rgba(67, 192, 140, 0.14);
+    --critical: #e2586a;
+    --critical-soft: rgba(226, 88, 106, 0.14);
+    --paper: #e9e4d8;
+    --paper-ink: #201c14;
+    --paper-ink-dim: #57503f;
+    --paper-line: #d3ccb8;
+    --mono: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", ui-monospace, Menlo, "Liberation Mono", monospace;
+    --sans: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  :root[data-theme="light"] {
+    --bg: #eef1f6;
+    --bg-grid: #e6eaf1;
+    --surface: #ffffff;
+    --surface-raised: #ffffff;
+    --surface-sunken: #f3f5f9;
+    --border: #d7dce6;
+    --border-soft: #e3e7ee;
+    --text: #141a26;
+    --text-dim: #414c60;
+    --text-mute: #767f92;
+    --accent: #a9740e;
+    --accent-dim: #8a5e0a;
+    --accent-soft: rgba(169, 116, 14, 0.10);
+    --accent-soft-2: rgba(169, 116, 14, 0.18);
+    --running: #1178ab;
+    --running-soft: rgba(17, 120, 171, 0.10);
+    --success: #1f8f63;
+    --success-soft: rgba(31, 143, 99, 0.10);
+    --critical: #c22f43;
+    --critical-soft: rgba(194, 47, 67, 0.10);
+    --paper: #fffdf8;
+    --paper-ink: #201c14;
+    --paper-ink-dim: #57503f;
+    --paper-line: #e3ddca;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #eef1f6;
+      --bg-grid: #e6eaf1;
+      --surface: #ffffff;
+      --surface-raised: #ffffff;
+      --surface-sunken: #f3f5f9;
+      --border: #d7dce6;
+      --border-soft: #e3e7ee;
+      --text: #141a26;
+      --text-dim: #414c60;
+      --text-mute: #767f92;
+      --accent: #a9740e;
+      --accent-dim: #8a5e0a;
+      --accent-soft: rgba(169, 116, 14, 0.10);
+      --accent-soft-2: rgba(169, 116, 14, 0.18);
+      --running: #1178ab;
+      --running-soft: rgba(17, 120, 171, 0.10);
+      --success: #1f8f63;
+      --success-soft: rgba(31, 143, 99, 0.10);
+      --critical: #c22f43;
+      --critical-soft: rgba(194, 47, 67, 0.10);
+      --paper: #fffdf8;
+      --paper-ink: #201c14;
+      --paper-ink-dim: #57503f;
+      --paper-line: #e3ddca;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background:
+      radial-gradient(ellipse 1200px 600px at 15% -10%, var(--accent-soft), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+  button { font-family: inherit; }
+  .tabular { font-variant-numeric: tabular-nums; }
+  ::selection { background: var(--accent-soft-2); }
+
+  .mono { font-family: var(--mono); }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-mute);
+  }
+
+  /* ---------- shell ---------- */
+  .shell { max-width: 1360px; margin: 0 auto; padding: 0 28px 80px; }
+
+  /* ---------- topbar ---------- */
+  .topbar {
+    position: sticky; top: 0; z-index: 40;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .topbar-inner {
+    max-width: 1360px; margin: 0 auto; padding: 14px 28px;
+    display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand-mark {
+    width: 30px; height: 30px; border: 1px solid var(--accent-dim);
+    display: grid; place-items: center; position: relative; flex-shrink: 0;
+    background: var(--surface-raised);
+  }
+  .brand-mark::before {
+    content: ""; position: absolute; inset: 5px;
+    border: 1px solid var(--accent); border-radius: 50%;
+  }
+  .brand-mark::after {
+    content: ""; position: absolute; width: 4px; height: 4px; border-radius: 50%;
+    background: var(--accent); box-shadow: 0 0 6px var(--accent);
+  }
+  .brand-text { display: flex; flex-direction: column; gap: 1px; }
+  .brand-text .name { font-family: var(--mono); font-weight: 600; font-size: 14px; letter-spacing: 0.02em; }
+  .brand-text .sub { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.16em; color: var(--text-mute); text-transform: uppercase; }
+
+  .model-rail { display: flex; align-items: center; gap: 18px; }
+  .model-chip {
+    display: flex; align-items: center; gap: 7px;
+    font-family: var(--mono); font-size: 11px; color: var(--text-dim);
+    padding: 5px 10px; border: 1px solid var(--border-soft); background: var(--surface);
+  }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); box-shadow: 0 0 5px var(--success); flex-shrink: 0; }
+  .theme-toggle {
+    border: 1px solid var(--border-soft); background: var(--surface); color: var(--text-dim);
+    padding: 6px 11px; font-family: var(--mono); font-size: 11px; cursor: pointer;
+  }
+  .theme-toggle:hover { border-color: var(--border); color: var(--text); }
+  .status-live { display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 11px; color: var(--success); }
+  .status-live .dot { animation: blink 2.2s ease-in-out infinite; }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  /* ---------- hero / command console ---------- */
+  .console {
+    margin-top: 28px; border: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--surface-raised), var(--surface));
+    padding: 26px 28px 24px; position: relative;
+  }
+  .corner { position: absolute; width: 14px; height: 14px; border-color: var(--accent-dim); opacity: 0.7; }
+  .corner.tl { top: -1px; left: -1px; border-top: 1px solid; border-left: 1px solid; }
+  .corner.tr { top: -1px; right: -1px; border-top: 1px solid; border-right: 1px solid; }
+  .corner.bl { bottom: -1px; left: -1px; border-bottom: 1px solid; border-left: 1px solid; }
+  .corner.br { bottom: -1px; right: -1px; border-bottom: 1px solid; border-right: 1px solid; }
+
+  .console-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 18px; flex-wrap: wrap; gap: 10px; }
+  .console-head h1 {
+    font-family: var(--mono); font-size: 19px; font-weight: 600; margin: 0;
+    letter-spacing: -0.01em; text-wrap: balance;
+  }
+  .console-head p { margin: 4px 0 0; color: var(--text-mute); font-size: 12.5px; max-width: 60ch; }
+
+  label.field-label {
+    display: block; font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--text-mute); margin-bottom: 7px;
+  }
+  .objective-row { display: flex; gap: 10px; margin-bottom: 20px; }
+  .prompt-caret { font-family: var(--mono); color: var(--accent); padding-top: 10px; user-select: none; }
+  textarea#objective {
+    flex: 1; resize: none; background: var(--surface-sunken); border: 1px solid var(--border);
+    color: var(--text); font-family: var(--mono); font-size: 13.5px; padding: 10px 12px;
+    height: 42px; line-height: 1.4;
+  }
+  textarea#objective:focus { outline: none; border-color: var(--accent-dim); }
+
+  .chip-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-bottom: 22px; }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    font-family: var(--mono); font-size: 11.5px; padding: 6px 11px;
+    border: 1px solid var(--border); background: var(--surface-sunken); color: var(--text-dim);
+    cursor: pointer; user-select: none; transition: border-color .12s, color .12s, background .12s;
+  }
+  .chip:hover { border-color: var(--text-mute); }
+  .chip.on { background: var(--accent-soft); border-color: var(--accent-dim); color: var(--accent); }
+  .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .console-foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .orchestrate-btn {
+    font-family: var(--mono); font-size: 12.5px; letter-spacing: 0.06em; text-transform: uppercase;
+    background: var(--accent); color: #1c1406; border: 1px solid var(--accent);
+    padding: 12px 24px; cursor: pointer; font-weight: 700; display: flex; align-items: center; gap: 9px;
+  }
+  .orchestrate-btn:hover:not(:disabled) { background: #f2b953; }
+  .orchestrate-btn:disabled { opacity: 0.55; cursor: progress; }
+  .orchestrate-btn:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+  .console-hint { font-family: var(--mono); font-size: 10.5px; color: var(--text-mute); }
+
+  /* ---------- kpi strip ---------- */
+  .kpi-strip {
+    margin-top: 20px; display: grid; grid-template-columns: repeat(6, 1fr);
+    border: 1px solid var(--border); background: var(--surface);
+  }
+  .kpi {
+    padding: 16px 16px; border-right: 1px solid var(--border-soft); position: relative;
+  }
+  .kpi:last-child { border-right: none; }
+  .kpi .eyebrow { margin-bottom: 8px; }
+  .kpi .val { font-family: var(--mono); font-size: 23px; font-weight: 600; letter-spacing: -0.01em; }
+  .kpi .val small { font-size: 12px; color: var(--text-mute); font-weight: 500; margin-left: 2px; }
+  .kpi .delta { font-family: var(--mono); font-size: 10.5px; margin-top: 5px; color: var(--text-mute); }
+  .kpi .delta.up { color: var(--success); }
+  .kpi .delta.warn { color: var(--accent); }
+  .kpi.pulse::after {
+    content: ""; position: absolute; top: 12px; right: 12px; width: 6px; height: 6px;
+    border-radius: 50%; background: var(--running); box-shadow: 0 0 6px var(--running);
+    animation: blink 1.6s ease-in-out infinite;
+  }
+
+  /* ---------- section shell ---------- */
+  .grid-main { display: grid; grid-template-columns: 1.55fr 1fr; gap: 18px; margin-top: 18px; align-items: start; }
+  .grid-two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 18px; align-items: start; }
+  .panel { border: 1px solid var(--border); background: var(--surface); }
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 15px 18px; border-bottom: 1px solid var(--border-soft);
+  }
+  .panel-head h2 { font-family: var(--mono); font-size: 13px; font-weight: 600; margin: 0; letter-spacing: 0.01em; }
+  .panel-head .hint { font-size: 11.5px; color: var(--text-mute); margin-top: 2px; }
+  .panel-body { padding: 18px; }
+  .panel-body.tight { padding: 0; }
+
+  /* ---------- agent network ---------- */
+  #network-wrap { position: relative; height: 300px; }
+  #network { width: 100%; height: 100%; display: block; }
+  .agent-label {
+    position: absolute; transform: translate(-50%, -50%); text-align: center; pointer-events: none;
+    width: 108px;
+  }
+  .agent-label .n { font-family: var(--mono); font-size: 10.5px; font-weight: 600; color: var(--text); white-space: nowrap; }
+  .agent-label .m { font-family: var(--mono); font-size: 9px; color: var(--text-mute); margin-top: 1px; }
+  .agent-model-select {
+    pointer-events: auto; margin-top: 3px; font-family: var(--mono); font-size: 9px;
+    background: var(--surface-sunken); color: var(--text-dim); border: 1px solid var(--border-soft);
+    padding: 1px 3px; width: 100%;
+  }
+
+  /* ---------- timeline ---------- */
+  .ambient-list { padding: 10px 18px; border-bottom: 1px solid var(--border-soft); display: flex; flex-direction: column; gap: 8px; }
+  .ambient-item { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-dim); }
+  .ambient-item .bar { flex: 1; height: 4px; background: var(--surface-sunken); border: 1px solid var(--border-soft); position: relative; }
+  .ambient-item .bar i { position: absolute; inset: 0; background: var(--running); width: var(--w, 40%); }
+  .ambient-item .pct { font-family: var(--mono); font-size: 10.5px; color: var(--text-mute); width: 32px; text-align: right; }
+
+  .timeline { padding: 6px 18px 16px; display: flex; flex-direction: column; }
+  .step {
+    display: flex; gap: 12px; padding: 12px 0; border-bottom: 1px dashed var(--border-soft);
+    opacity: 0.35; transition: opacity .25s;
+  }
+  .step:last-child { border-bottom: none; }
+  .step.visible { opacity: 1; }
+  .step-marker { flex-shrink: 0; width: 20px; display: flex; flex-direction: column; align-items: center; padding-top: 2px; }
+  .step-dot {
+    width: 10px; height: 10px; border-radius: 50%; border: 1px solid var(--border);
+    background: var(--surface-sunken); flex-shrink: 0;
+  }
+  .step.state-queued .step-dot { border-color: var(--text-mute); }
+  .step.state-running .step-dot { border-color: var(--running); background: var(--running); box-shadow: 0 0 7px var(--running); animation: blink 1s ease-in-out infinite; }
+  .step.state-approval .step-dot { border-color: var(--accent); background: var(--accent); box-shadow: 0 0 7px var(--accent); }
+  .step.state-done .step-dot { border-color: var(--success); background: var(--success); }
+  .step-line { width: 1px; flex: 1; background: var(--border-soft); margin-top: 4px; }
+  .step-body { flex: 1; padding-bottom: 2px; }
+  .step-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .step-title { font-size: 12.5px; font-weight: 600; }
+  .step-tag {
+    font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.06em;
+    padding: 2px 7px; border: 1px solid var(--border-soft); color: var(--text-mute); white-space: nowrap;
+  }
+  .step.state-running .step-tag { color: var(--running); border-color: var(--running); }
+  .step.state-approval .step-tag { color: var(--accent); border-color: var(--accent-dim); }
+  .step.state-done .step-tag { color: var(--success); border-color: var(--success); }
+  .step-meta { font-family: var(--mono); font-size: 10.5px; color: var(--text-mute); margin-top: 3px; }
+  .step-detail { font-size: 12px; color: var(--text-dim); margin-top: 6px; max-width: 62ch; }
+  .step-empty { padding: 30px 0; text-align: center; color: var(--text-mute); font-size: 12.5px; }
+
+  /* ---------- approvals ---------- */
+  .approval-list { padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; }
+  .approval-card { border: 1px solid var(--border); padding: 12px 13px; background: var(--surface-sunken); }
+  .approval-card.new { border-color: var(--accent-dim); background: var(--accent-soft); animation: flashIn .6s ease; }
+  @keyframes flashIn { from { transform: translateY(-4px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  .approval-top { display: flex; align-items: start; justify-content: space-between; gap: 8px; }
+  .approval-title { font-size: 12.5px; font-weight: 600; max-width: 30ch; }
+  .risk-pill {
+    font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em;
+    padding: 2px 7px; border: 1px solid; white-space: nowrap; flex-shrink: 0;
+  }
+  .risk-pill.High { color: var(--critical); border-color: var(--critical); }
+  .risk-pill.Medium { color: var(--accent); border-color: var(--accent-dim); }
+  .risk-pill.Low { color: var(--text-mute); border-color: var(--border); }
+  .approval-meta { font-family: var(--mono); font-size: 10.5px; color: var(--text-mute); margin: 5px 0 10px; }
+  .approval-actions { display: flex; gap: 8px; }
+  .approval-actions button {
+    flex: 1; font-family: var(--mono); font-size: 11px; padding: 6px 0; cursor: pointer;
+    border: 1px solid var(--border); background: var(--surface); color: var(--text-dim);
+  }
+  .approval-actions button.approve:hover { border-color: var(--success); color: var(--success); }
+  .approval-actions button.reject:hover { border-color: var(--critical); color: var(--critical); }
+  .decided { font-family: var(--mono); font-size: 11px; margin-top: 2px; }
+  .decided.approved { color: var(--success); }
+  .decided.rejected { color: var(--critical); }
+
+  /* ---------- governance ---------- */
+  .framework-grid { padding: 16px 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .framework { border: 1px solid var(--border-soft); padding: 10px 11px; }
+  .framework-top { display: flex; justify-content: space-between; font-size: 11.5px; margin-bottom: 6px; }
+  .framework-top b { font-weight: 600; }
+  .framework-top span { font-family: var(--mono); color: var(--text-mute); }
+  .framework .bar { height: 4px; background: var(--surface-sunken); border: 1px solid var(--border-soft); position: relative; }
+  .framework .bar i { position: absolute; inset: 0; background: var(--success); }
+
+  .risk-list { padding: 4px 18px 16px; display: flex; flex-direction: column; gap: 9px; }
+  .risk-row { display: flex; gap: 9px; align-items: start; padding: 9px 0; border-top: 1px solid var(--border-soft); }
+  .risk-row:first-child { border-top: none; }
+  .risk-row .sev { flex-shrink: 0; margin-top: 3px; }
+  .risk-row p { margin: 0; font-size: 12px; color: var(--text-dim); }
+  .risk-row .rmeta { font-family: var(--mono); font-size: 10px; color: var(--text-mute); margin-top: 3px; }
+
+  /* ---------- performance table ---------- */
+  table.perf { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.perf th {
+    text-align: left; font-family: var(--mono); font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--text-mute); font-weight: 500; padding: 10px 14px;
+    border-bottom: 1px solid var(--border-soft); white-space: nowrap;
+  }
+  table.perf td { padding: 10px 14px; border-bottom: 1px solid var(--border-soft); color: var(--text-dim); white-space: nowrap; }
+  table.perf tr:last-child td { border-bottom: none; }
+  table.perf td.name { color: var(--text); font-weight: 600; }
+  .model-select {
+    font-family: var(--mono); font-size: 11px; background: var(--surface-sunken); color: var(--text-dim);
+    border: 1px solid var(--border-soft); padding: 3px 6px;
+  }
+  .trend-up { color: var(--success); }
+  .trend-down { color: var(--critical); }
+  .scroll-x { overflow-x: auto; }
+
+  /* ---------- roi ---------- */
+  .roi-body { padding: 18px; }
+  .roi-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 18px; }
+  .roi-stat .eyebrow { margin-bottom: 6px; }
+  .roi-stat .val { font-family: var(--mono); font-size: 21px; font-weight: 600; }
+  .roi-stat .val.success { color: var(--success); }
+  .roi-stat .sub { font-size: 11px; color: var(--text-mute); margin-top: 3px; }
+  #roi-chart { width: 100%; height: 90px; display: block; }
+
+  /* ---------- deliverable ---------- */
+  .deliverable-wrap { display: none; margin-top: 18px; }
+  .deliverable-wrap.show { display: block; animation: flashIn .5s ease; }
+  .deliverable {
+    background: var(--paper); color: var(--paper-ink); border: 1px solid var(--paper-line);
+    padding: 40px 46px 46px;
+  }
+  .deliverable-head {
+    display: flex; justify-content: space-between; align-items: start; gap: 20px;
+    border-bottom: 2px solid var(--paper-ink); padding-bottom: 16px; margin-bottom: 22px;
+  }
+  .deliverable-head .eyebrow2 {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--paper-ink-dim);
+  }
+  .deliverable-head h3 {
+    font-family: var(--mono); font-size: 22px; margin: 6px 0 0; letter-spacing: -0.01em; text-wrap: balance;
+  }
+  .deliverable-actions { display: flex; gap: 8px; flex-shrink: 0; }
+  .deliverable-actions button {
+    font-family: var(--mono); font-size: 10.5px; padding: 7px 12px; cursor: pointer;
+    border: 1px solid var(--paper-ink-dim); background: transparent; color: var(--paper-ink);
+  }
+  .deliverable-actions button:hover { background: var(--paper-ink); color: var(--paper); }
+  .deliverable h4 {
+    font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;
+    color: var(--paper-ink-dim); margin: 26px 0 10px; padding-top: 20px; border-top: 1px solid var(--paper-line);
+  }
+  .deliverable h4:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
+  .deliverable p { font-size: 13.5px; line-height: 1.65; max-width: 78ch; margin: 0 0 10px; }
+  .deliverable ul.findings { margin: 0; padding-left: 20px; }
+  .deliverable ul.findings li { font-size: 13px; line-height: 1.6; margin-bottom: 8px; max-width: 74ch; }
+  .deliverable ul.findings li b { font-weight: 700; }
+  table.rec { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.rec th {
+    text-align: left; font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--paper-ink-dim); padding: 8px 10px; border-bottom: 1px solid var(--paper-ink);
+  }
+  table.rec td { padding: 10px 10px; border-bottom: 1px solid var(--paper-line); vertical-align: top; }
+  .priority-pill {
+    font-family: var(--mono); font-size: 9px; text-transform: uppercase; padding: 2px 6px;
+    border: 1px solid var(--paper-ink-dim);
+  }
+  table.audit { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+  table.audit th {
+    text-align: left; font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--paper-ink-dim); padding: 7px 10px; border-bottom: 1px solid var(--paper-ink);
+  }
+  table.audit td { padding: 8px 10px; border-bottom: 1px solid var(--paper-line); color: var(--paper-ink-dim); }
+  table.audit td.a { color: var(--paper-ink); font-weight: 600; }
+
+  .toast-wrap { position: fixed; bottom: 20px; right: 20px; z-index: 100; display: flex; flex-direction: column; gap: 8px; }
+  .toast {
+    font-family: var(--mono); font-size: 11.5px; background: var(--surface-raised); border: 1px solid var(--border);
+    color: var(--text); padding: 10px 14px; box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    animation: flashIn .3s ease;
+  }
+  :root[data-theme="light"] .toast, .toast { box-shadow: 0 8px 24px rgba(0,0,0,0.25); }
+
+  footer.foot {
+    margin-top: 40px; padding-top: 18px; border-top: 1px solid var(--border-soft);
+    display: flex; justify-content: space-between; color: var(--text-mute); font-size: 11px; font-family: var(--mono);
+    flex-wrap: wrap; gap: 8px;
+  }
+
+  @media (max-width: 980px) {
+    .kpi-strip { grid-template-columns: repeat(3, 1fr); }
+    .kpi:nth-child(3) { border-right: none; }
+    .grid-main, .grid-two { grid-template-columns: 1fr; }
+    .chip-groups { grid-template-columns: 1fr; }
+    .roi-stats { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+<script>document.documentElement.setAttribute("data-theme", "dark");</script>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <div class="brand-mark"></div>
+      <div class="brand-text">
+        <span class="name">AIVEN ORCHESTRATOR</span>
+        <span class="sub">Agent governance console</span>
+      </div>
+    </div>
+    <div class="model-rail">
+      <div class="model-chip"><span class="dot"></span>Anthropic</div>
+      <div class="model-chip"><span class="dot"></span>OpenAI</div>
+      <div class="model-chip"><span class="dot"></span>Google</div>
+      <div class="status-live"><span class="dot"></span>LIVE</div>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle color theme">MODE</button>
+    </div>
+  </div>
+</div>
+
+<div class="shell">
+
+  <!-- ================= COMMAND CONSOLE ================= -->
+  <section class="console" aria-labelledby="console-h">
+    <span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>
+    <div class="console-head">
+      <div>
+        <h1 id="console-h">&gt; Enter a business objective to orchestrate</h1>
+        <p>The orchestrator decomposes your objective, assigns tasks to specialized agents, routes required approvals, and executes the workflow under governance.</p>
+      </div>
+    </div>
+
+    <div class="objective-row">
+      <span class="prompt-caret">$</span>
+      <textarea id="objective" spellcheck="false">Analyze operational performance and prepare an executive improvement plan</textarea>
+    </div>
+
+    <div class="chip-groups">
+      <div>
+        <span class="field-label">Departments involved</span>
+        <div class="chip-row" id="dept-row"></div>
+      </div>
+      <div>
+        <span class="field-label">Data sources</span>
+        <div class="chip-row" id="src-row"></div>
+      </div>
+    </div>
+
+    <div class="console-foot">
+      <button class="orchestrate-btn" id="orchestrate-btn" type="button">
+        <span>▶</span> Orchestrate
+      </button>
+      <span class="console-hint" id="console-hint">6 agents governed · 3 model providers connected</span>
+    </div>
+  </section>
+
+  <!-- ================= KPI STRIP ================= -->
+  <section class="kpi-strip" aria-label="Command center metrics">
+    <div class="kpi pulse">
+      <div class="eyebrow">Active agents</div>
+      <div class="val tabular" id="kpi-agents">6 <small>/ 6</small></div>
+      <div class="delta">all governed</div>
+    </div>
+    <div class="kpi">
+      <div class="eyebrow">Live workflows</div>
+      <div class="val tabular" id="kpi-workflows">3</div>
+      <div class="delta" id="kpi-workflows-delta">steady</div>
+    </div>
+    <div class="kpi">
+      <div class="eyebrow">Pending approvals</div>
+      <div class="val tabular" id="kpi-approvals">2</div>
+      <div class="delta warn" id="kpi-approvals-delta">1 aging &gt; 24h</div>
+    </div>
+    <div class="kpi">
+      <div class="eyebrow">Risk alerts</div>
+      <div class="val tabular">1 <small>High</small></div>
+      <div class="delta">2 medium</div>
+    </div>
+    <div class="kpi">
+      <div class="eyebrow">Time saved · 30d</div>
+      <div class="val tabular" id="kpi-time">412 <small>hrs</small></div>
+      <div class="delta up" id="kpi-time-delta">vs. manual baseline</div>
+    </div>
+    <div class="kpi">
+      <div class="eyebrow">Business impact · 30d</div>
+      <div class="val tabular" id="kpi-impact">$184.2k</div>
+      <div class="delta up" id="kpi-impact-delta">margin recovered</div>
+    </div>
+  </section>
+
+  <!-- ================= NETWORK + TIMELINE / APPROVALS + RISK ================= -->
+  <section class="grid-main">
+    <div style="display:flex; flex-direction:column; gap:18px;">
+
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Agent network</h2>
+            <div class="hint">Reassign the model powering any agent — governance re-evaluates automatically.</div>
+          </div>
+        </div>
+        <div class="panel-body tight">
+          <div id="network-wrap"><canvas id="network"></canvas></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Live workflow timeline</h2>
+            <div class="hint">Executive Improvement Plan · runs after you click Orchestrate</div>
+          </div>
+        </div>
+        <div class="ambient-list">
+          <div class="ambient-item">
+            <span class="mono" style="width:150px; flex-shrink:0;">Q3 Vendor Risk Review</span>
+            <div class="bar" style="--w:68%"><i></i></div>
+            <span class="pct tabular">68%</span>
+          </div>
+          <div class="ambient-item">
+            <span class="mono" style="width:150px; flex-shrink:0;">Customer Churn Root-Cause</span>
+            <div class="bar" style="--w:41%"><i></i></div>
+            <span class="pct tabular">41%</span>
+          </div>
+        </div>
+        <div class="timeline" id="timeline">
+          <div class="step-empty" id="timeline-empty">No active run. Enter an objective above and click Orchestrate to watch agents work in real time.</div>
+        </div>
+      </div>
+
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:18px;">
+
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Human approval queue</h2>
+            <div class="hint">Nothing ships without sign-off on flagged actions.</div>
+          </div>
+        </div>
+        <div class="approval-list" id="approval-list"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Governance &amp; risk</h2>
+            <div class="hint">Framework coverage and open risk flags.</div>
+          </div>
+        </div>
+        <div class="framework-grid">
+          <div class="framework"><div class="framework-top"><b>EU AI Act</b><span>88%</span></div><div class="bar"><i style="width:88%"></i></div></div>
+          <div class="framework"><div class="framework-top"><b>NIST AI RMF</b><span>79%</span></div><div class="bar"><i style="width:79%"></i></div></div>
+          <div class="framework"><div class="framework-top"><b>ISO/IEC 42001</b><span>71%</span></div><div class="bar"><i style="width:71%"></i></div></div>
+          <div class="framework"><div class="framework-top"><b>SOC 2</b><span>94%</span></div><div class="bar"><i style="width:94%"></i></div></div>
+        </div>
+        <div class="risk-list" id="risk-list"></div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ================= PERFORMANCE + ROI ================= -->
+  <section class="grid-two">
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>Agent performance</h2>
+          <div class="hint">Trailing 30 days, across all workflows.</div>
+        </div>
+      </div>
+      <div class="panel-body tight scroll-x">
+        <table class="perf" id="perf-table"></table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>ROI indicators</h2>
+          <div class="hint">Cumulative impact of orchestrated work.</div>
+        </div>
+      </div>
+      <div class="roi-body">
+        <div class="roi-stats">
+          <div class="roi-stat">
+            <div class="eyebrow">This workflow</div>
+            <div class="val" id="roi-hours">—</div>
+            <div class="sub">est. hours saved</div>
+          </div>
+          <div class="roi-stat">
+            <div class="eyebrow">Cost avoided</div>
+            <div class="val success" id="roi-cost">—</div>
+            <div class="sub">vs. manual analysis</div>
+          </div>
+          <div class="roi-stat">
+            <div class="eyebrow">Cycle time</div>
+            <div class="val" id="roi-cycle">3 wks → —</div>
+            <div class="sub">objective to deliverable</div>
+          </div>
+        </div>
+        <div class="eyebrow" style="margin-bottom:6px;">Cumulative hours saved · 6mo</div>
+        <canvas id="roi-chart"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= DELIVERABLE ================= -->
+  <div class="deliverable-wrap" id="deliverable-wrap">
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>Final deliverable preview</h2>
+          <div class="hint">Generated by the Executive Writer Agent · reviewed against governance policy</div>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div class="deliverable">
+          <div class="deliverable-head">
+            <div>
+              <div class="eyebrow2">Aiven Orchestrator · Executive Action Plan</div>
+              <h3 id="deliv-title">Operational Performance Improvement Plan</h3>
+            </div>
+            <div class="deliverable-actions">
+              <button id="copy-md" type="button">Copy as Markdown</button>
+              <button type="button" onclick="window.print()">Print</button>
+            </div>
+          </div>
+
+          <h4>Executive summary</h4>
+          <p id="deliv-summary"></p>
+
+          <h4>Key findings</h4>
+          <ul class="findings" id="deliv-findings"></ul>
+
+          <h4>Recommendations</h4>
+          <table class="rec">
+            <thead><tr><th>Recommendation</th><th>Owner</th><th>Next step</th><th>Priority</th></tr></thead>
+            <tbody id="deliv-recs"></tbody>
+          </table>
+
+          <h4>Risk flags</h4>
+          <ul class="findings" id="deliv-risks"></ul>
+
+          <h4>Audit trail</h4>
+          <div class="scroll-x">
+            <table class="audit">
+              <thead><tr><th>Time</th><th>Agent</th><th>Action</th><th>Model</th><th>Output</th></tr></thead>
+              <tbody id="deliv-audit"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <span>Aiven Consulting Group — prototype build, simulated data</span>
+    <span id="clock" class="tabular"></span>
+  </footer>
+
+</div>
+
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------------- theme ---------------- */
+  var root = document.documentElement;
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    var cur = root.getAttribute("data-theme");
+    var mql = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    var effectiveDark = cur ? cur === "dark" : mql;
+    root.setAttribute("data-theme", effectiveDark ? "light" : "dark");
+  });
+
+  /* ---------------- clock ---------------- */
+  function tickClock() {
+    var d = new Date();
+    document.getElementById("clock").textContent =
+      d.toLocaleDateString(undefined, { month: "short", day: "2-digit", year: "numeric" }) + " · " +
+      d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+  tickClock();
+  setInterval(tickClock, 1000);
+
+  /* ---------------- toasts ---------------- */
+  function toast(msg) {
+    var wrap = document.getElementById("toast-wrap");
+    var el = document.createElement("div");
+    el.className = "toast";
+    el.textContent = msg;
+    wrap.appendChild(el);
+    setTimeout(function () {
+      el.style.opacity = "0";
+      el.style.transition = "opacity .3s";
+      setTimeout(function () { el.remove(); }, 300);
+    }, 3600);
+  }
+
+  /* ---------------- data: chips ---------------- */
+  var DEPTS = [
+    { name: "Finance", on: true }, { name: "Operations", on: true }, { name: "Customer Success", on: true },
+    { name: "Sales", on: false }, { name: "Marketing", on: false }, { name: "HR", on: false },
+    { name: "IT", on: false }, { name: "Legal", on: false }
+  ];
+  var SOURCES = [
+    { name: "ERP (NetSuite)", on: true }, { name: "CRM (Salesforce)", on: true }, { name: "Financial reports", on: true },
+    { name: "Support tickets (Zendesk)", on: false }, { name: "Data warehouse (Snowflake)", on: false }, { name: "HRIS (Workday)", on: false }
+  ];
+
+  function renderChips(list, container) {
+    container.innerHTML = "";
+    list.forEach(function (item, i) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "chip" + (item.on ? " on" : "");
+      b.textContent = item.name;
+      b.setAttribute("aria-pressed", String(item.on));
+      b.addEventListener("click", function () {
+        item.on = !item.on;
+        b.classList.toggle("on", item.on);
+        b.setAttribute("aria-pressed", String(item.on));
+      });
+      container.appendChild(b);
+    });
+  }
+  renderChips(DEPTS, document.getElementById("dept-row"));
+  renderChips(SOURCES, document.getElementById("src-row"));
+
+  /* ---------------- agents / model governance ---------------- */
+  var MODELS = ["Claude Sonnet 5", "Claude Opus 4.8", "GPT-4o", "Gemini 1.5 Pro"];
+  var AGENTS = [
+    { id: "research", name: "Research & Data Agent", model: "Claude Sonnet 5", role: "Pulls and reconciles data across connected systems", x: 0.18, y: 0.28 },
+    { id: "finance", name: "Finance Agent", model: "GPT-4o", role: "Analyzes cost structure, margin, and variance", x: 0.18, y: 0.74 },
+    { id: "ops", name: "Operations Agent", model: "Claude Sonnet 5", role: "Maps process cycle times and bottlenecks", x: 0.5, y: 0.88 },
+    { id: "risk", name: "Risk & Compliance Agent", model: "Claude Opus 4.8", role: "Screens findings against governance policy", x: 0.82, y: 0.74 },
+    { id: "strategy", name: "Strategy Agent", model: "GPT-4o", role: "Synthesizes findings into prioritized recommendations", x: 0.82, y: 0.28 },
+    { id: "writer", name: "Executive Writer Agent", model: "Claude Sonnet 5", role: "Drafts the executive-ready action plan", x: 0.5, y: 0.12 }
+  ];
+  var HUB = { x: 0.5, y: 0.5 };
+
+  var perfBase = {
+    research: { tasks: 214, success: 98.1, latency: "6.2s", cost: "$0.09", trend: "up" },
+    finance: { tasks: 96, success: 96.4, latency: "9.8s", cost: "$0.21", trend: "up" },
+    ops: { tasks: 133, success: 97.0, latency: "7.1s", cost: "$0.14", trend: "flat" },
+    risk: { tasks: 88, success: 99.3, latency: "11.4s", cost: "$0.27", trend: "up" },
+    strategy: { tasks: 61, success: 95.7, latency: "10.1s", cost: "$0.24", trend: "down" },
+    writer: { tasks: 74, success: 98.8, latency: "8.4s", cost: "$0.17", trend: "up" }
+  };
+
+  function renderPerfTable() {
+    var t = document.getElementById("perf-table");
+    var head = "<thead><tr><th>Agent</th><th>Model</th><th>Tasks · 30d</th><th>Success</th><th>Avg latency</th><th>Avg cost</th><th>Trend</th></tr></thead>";
+    var rows = AGENTS.map(function (a) {
+      var p = perfBase[a.id];
+      var trendCls = p.trend === "up" ? "trend-up" : p.trend === "down" ? "trend-down" : "";
+      var trendSym = p.trend === "up" ? "▲" : p.trend === "down" ? "▼" : "•";
+      return "<tr><td class='name'>" + a.name + "</td><td>" +
+        "<select class='model-select' data-agent='" + a.id + "'>" +
+        MODELS.map(function (m) { return "<option" + (m === a.model ? " selected" : "") + ">" + m + "</option>"; }).join("") +
+        "</select></td><td class='tabular'>" + p.tasks + "</td><td class='tabular'>" + p.success + "%</td><td class='tabular'>" + p.latency +
+        "</td><td class='tabular'>" + p.cost + "</td><td class='" + trendCls + "'>" + trendSym + "</td></tr>";
+    }).join("");
+    t.innerHTML = head + "<tbody>" + rows + "</tbody>";
+
+    Array.prototype.forEach.call(t.querySelectorAll(".model-select"), function (sel) {
+      sel.addEventListener("change", function () {
+        var agent = AGENTS.find(function (a) { return a.id === sel.dataset.agent; });
+        agent.model = sel.value;
+        renderNetwork();
+        toast(agent.name + " reassigned to " + sel.value + " — governance policy re-evaluated");
+      });
+    });
+  }
+  renderPerfTable();
+
+  /* ---------------- network canvas ---------------- */
+  var canvas = document.getElementById("network");
+  var wrap = document.getElementById("network-wrap");
+  var ctx = canvas.getContext("2d");
+  var dpr = Math.max(1, window.devicePixelRatio || 1);
+  var activeAgentIds = [];
+  var pulseT = 0;
+
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  function sizeCanvas() {
+    var r = wrap.getBoundingClientRect();
+    canvas.width = r.width * dpr;
+    canvas.height = r.height * dpr;
+    canvas.style.width = r.width + "px";
+    canvas.style.height = r.height + "px";
+    positionLabels();
+  }
+
+  var labelEls = {};
+  function buildLabels() {
+    wrap.querySelectorAll(".agent-label").forEach(function (n) { n.remove(); });
+    AGENTS.forEach(function (a) {
+      var d = document.createElement("div");
+      d.className = "agent-label";
+      d.innerHTML = "<div class='n'>" + a.name + "</div><div class='m'>" + a.role + "</div>" +
+        "<select class='agent-model-select' data-agent='" + a.id + "'>" +
+        MODELS.map(function (m) { return "<option" + (m === a.model ? " selected" : "") + ">" + m + "</option>"; }).join("") + "</select>";
+      wrap.appendChild(d);
+      labelEls[a.id] = d;
+      d.querySelector("select").addEventListener("change", function (e) {
+        a.model = e.target.value;
+        renderPerfTable();
+        toast(a.name + " reassigned to " + e.target.value + " — governance policy re-evaluated");
+      });
+    });
+  }
+  function positionLabels() {
+    var r = wrap.getBoundingClientRect();
+    AGENTS.forEach(function (a) {
+      var d = labelEls[a.id];
+      if (!d) return;
+      d.style.left = (a.x * r.width) + "px";
+      var yOff = a.y < 0.2 ? -34 : a.y > 0.8 ? 34 : 0;
+      d.style.top = (a.y * r.height + yOff) + "px";
+    });
+  }
+
+  function drawNetwork() {
+    var r = wrap.getBoundingClientRect();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, r.width, r.height);
+
+    var border = cssVar("--border-soft") || "#1a2235";
+    var running = cssVar("--running") || "#52b3e6";
+    var success = cssVar("--success") || "#43c08c";
+    var accent = cssVar("--accent") || "#e7a838";
+    var textMute = cssVar("--text-mute") || "#7d879c";
+
+    var hub = { x: HUB.x * r.width, y: HUB.y * r.height };
+
+    // edges
+    AGENTS.forEach(function (a) {
+      var p = { x: a.x * r.width, y: a.y * r.height };
+      var isActive = activeAgentIds.indexOf(a.id) !== -1;
+      ctx.beginPath();
+      ctx.moveTo(hub.x, hub.y);
+      ctx.lineTo(p.x, p.y);
+      ctx.strokeStyle = isActive ? running : border;
+      ctx.lineWidth = isActive ? 1.6 : 1;
+      ctx.stroke();
+
+      if (isActive) {
+        var t = (pulseT % 100) / 100;
+        var px = hub.x + (p.x - hub.x) * t;
+        var py = hub.y + (p.y - hub.y) * t;
+        ctx.beginPath();
+        ctx.arc(px, py, 2.6, 0, Math.PI * 2);
+        ctx.fillStyle = running;
+        ctx.fill();
+      }
+    });
+
+    // hub
+    ctx.beginPath();
+    ctx.arc(hub.x, hub.y, 15, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(231,168,56,0.12)";
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(hub.x, hub.y, 9, 0, Math.PI * 2);
+    ctx.fillStyle = accent;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(hub.x, hub.y, 15, 0, Math.PI * 2);
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // agent nodes
+    AGENTS.forEach(function (a) {
+      var p = { x: a.x * r.width, y: a.y * r.height };
+      var isActive = activeAgentIds.indexOf(a.id) !== -1;
+      var isDone = a.status === "done";
+      var color = isDone ? success : isActive ? running : textMute;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
+      ctx.fillStyle = cssVar("--surface") || "#121a29";
+      ctx.fill();
+      ctx.lineWidth = isActive || isDone ? 1.8 : 1;
+      ctx.strokeStyle = color;
+      ctx.stroke();
+      if (isActive) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+      }
+    });
+  }
+
+  var rafId = null;
+  function animateNetwork() {
+    pulseT += 1.4;
+    drawNetwork();
+    rafId = requestAnimationFrame(animateNetwork);
+  }
+  function renderNetwork() { drawNetwork(); }
+
+  buildLabels();
+  sizeCanvas();
+  window.addEventListener("resize", sizeCanvas);
+  new MutationObserver(drawNetwork).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    animateNetwork();
+  } else {
+    drawNetwork();
+  }
+
+  /* ---------------- roi sparkline ---------------- */
+  function drawROI(extra) {
+    var c = document.getElementById("roi-chart");
+    var rr = c.getBoundingClientRect();
+    c.width = rr.width * dpr; c.height = rr.height * dpr;
+    var cx = c.getContext("2d");
+    cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    cx.clearRect(0, 0, rr.width, rr.height);
+    var base = [180, 260, 340, 390, 412];
+    var data = extra ? base.concat([412 + extra]) : base;
+    var max = Math.max.apply(null, data) * 1.15;
+    var w = rr.width, h = rr.height, pad = 4;
+    var step = (w - pad * 2) / (data.length - 1);
+    var pts = data.map(function (v, i) { return [pad + i * step, h - pad - (v / max) * (h - pad * 2)]; });
+
+    var running = cssVar("--running") || "#52b3e6";
+    var accent = cssVar("--accent") || "#e7a838";
+
+    // area
+    cx.beginPath();
+    cx.moveTo(pts[0][0], h);
+    pts.forEach(function (p) { cx.lineTo(p[0], p[1]); });
+    cx.lineTo(pts[pts.length - 1][0], h);
+    cx.closePath();
+    var grad = cx.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, "rgba(82,179,230,0.28)");
+    grad.addColorStop(1, "rgba(82,179,230,0)");
+    cx.fillStyle = grad;
+    cx.fill();
+
+    // line
+    cx.beginPath();
+    pts.forEach(function (p, i) { i === 0 ? cx.moveTo(p[0], p[1]) : cx.lineTo(p[0], p[1]); });
+    cx.strokeStyle = running;
+    cx.lineWidth = 1.6;
+    cx.stroke();
+
+    // endpoint
+    var last = pts[pts.length - 1];
+    cx.beginPath();
+    cx.arc(last[0], last[1], 3.4, 0, Math.PI * 2);
+    cx.fillStyle = extra ? accent : running;
+    cx.fill();
+  }
+  drawROI();
+  window.addEventListener("resize", function () { drawROI(); });
+
+  /* ---------------- approvals ---------------- */
+  var APPROVALS = [
+    { id: "a1", title: "Publish Q3 Vendor Risk Review to Legal workspace", by: "Risk & Compliance Agent", risk: "Medium", age: "6h ago" },
+    { id: "a2", title: "Grant Finance Agent read access to Q4 forecast model", by: "Orchestrator Core", risk: "Low", age: "1d ago" }
+  ];
+  var decisions = {};
+
+  function renderApprovals() {
+    var wrap = document.getElementById("approval-list");
+    wrap.innerHTML = "";
+    APPROVALS.forEach(function (a) {
+      var el = document.createElement("div");
+      el.className = "approval-card" + (a._new ? " new" : "");
+      var decided = decisions[a.id];
+      el.innerHTML =
+        "<div class='approval-top'><span class='approval-title'>" + a.title + "</span>" +
+        "<span class='risk-pill " + a.risk + "'>" + a.risk + "</span></div>" +
+        "<div class='approval-meta'>" + a.by + " · " + a.age + "</div>" +
+        (decided
+          ? "<div class='decided " + decided + "'>" + (decided === "approved" ? "✓ Approved" : "✕ Rejected") + " this session</div>"
+          : "<div class='approval-actions'><button class='approve'>Approve</button><button class='reject'>Reject</button></div>");
+      wrap.appendChild(el);
+      if (!decided) {
+        el.querySelector(".approve").addEventListener("click", function () { decide(a.id, "approved"); });
+        el.querySelector(".reject").addEventListener("click", function () { decide(a.id, "rejected"); });
+      }
+    });
+    document.getElementById("kpi-approvals").textContent = APPROVALS.filter(function (a) { return !decisions[a.id]; }).length;
+  }
+  function decide(id, decision) {
+    decisions[id] = decision;
+    renderApprovals();
+    toast("Approval " + decision + " — recorded to audit trail");
+    if (id === "run-approval" && decision === "approved" && window.__resumeRun) {
+      window.__resumeRun();
+    }
+  }
+  renderApprovals();
+
+  /* ---------------- risk list ---------------- */
+  var RISKS = [
+    { sev: "High", text: "Draft executive report references customer-level financial data that requires redaction before external sharing.", meta: "Risk & Compliance Agent · 22m ago" },
+    { sev: "Medium", text: "Finance Agent output varies 4.2% from golden-dataset baseline — within tolerance, flagged for review.", meta: "Reliability monitor · 3h ago" },
+    { sev: "Medium", text: "OpenAI API latency degraded 18% over trailing 24 hours; auto-routing shifted 2 tasks to Claude.", meta: "Model health · 5h ago" }
+  ];
+  function renderRisks() {
+    var wrap = document.getElementById("risk-list");
+    wrap.innerHTML = RISKS.map(function (r) {
+      var color = r.sev === "High" ? "var(--critical)" : "var(--accent)";
+      return "<div class='risk-row'><span class='sev'><span class='risk-pill " + r.sev + "'>" + r.sev + "</span></span>" +
+        "<div><p>" + r.text + "</p><div class='rmeta'>" + r.meta + "</div></div></div>";
+    }).join("");
+  }
+  renderRisks();
+
+  /* ---------------- orchestration run ---------------- */
+  var WORKFLOW = [
+    { id: "decompose", agent: "Orchestrator Core", agentId: null, title: "Decompose objective into a task graph", detail: "Identified 5 downstream tasks across Research, Finance, Operations, Risk, Strategy, and Writer agents.", ms: 900 },
+    { id: "research", agent: "Research & Data Agent", agentId: "research", title: "Pull and reconcile source data", detail: "Queried selected data sources and normalized records for downstream analysis.", ms: 2200 },
+    { id: "finance", agent: "Finance Agent", agentId: "finance", title: "Analyze cost structure and margin trends", detail: "Found gross margin compression concentrated in one business unit over the last two quarters.", ms: 2000 },
+    { id: "ops", agent: "Operations Agent", agentId: "ops", title: "Map process cycle times and bottlenecks", detail: "Identified a single approval step accounting for the majority of cycle-time variance.", ms: 2000 },
+    { id: "risk", agent: "Risk & Compliance Agent", agentId: "risk", title: "Screen findings against governance policy", detail: "Flagged one high-risk item requiring human approval before inclusion in the report.", ms: 1800, approval: true },
+    { id: "strategy", agent: "Strategy Agent", agentId: "strategy", title: "Synthesize recommendations", detail: "Prioritized three recommendations by estimated impact and effort.", ms: 1900 },
+    { id: "writer", agent: "Executive Writer Agent", agentId: "writer", title: "Draft the executive action plan", detail: "Compiled findings, recommendations, risk flags, and audit trail into a governed deliverable.", ms: 1700 },
+    { id: "final", agent: "Orchestrator Core", agentId: null, title: "Finalize and route for distribution", detail: "Deliverable compiled and staged for executive review.", ms: 700 }
+  ];
+
+  var btn = document.getElementById("orchestrate-btn");
+  var running = false;
+
+  btn.addEventListener("click", function () {
+    if (running) return;
+    running = true;
+    btn.disabled = true;
+    btn.innerHTML = "<span>■</span> Orchestrating…";
+    document.getElementById("kpi-workflows").textContent = "4";
+    document.getElementById("kpi-workflows-delta").textContent = "+1 just started";
+    document.getElementById("kpi-workflows-delta").className = "delta up";
+    document.getElementById("timeline-empty").style.display = "none";
+    document.getElementById("timeline").querySelectorAll(".step").forEach(function (n) { n.remove(); });
+    document.getElementById("deliverable-wrap").classList.remove("show");
+    activeAgentIds = [];
+
+    var tl = document.getElementById("timeline");
+    var stepEls = WORKFLOW.map(function (s, i) {
+      var d = document.createElement("div");
+      d.className = "step state-queued";
+      d.innerHTML =
+        "<div class='step-marker'><div class='step-dot'></div>" + (i < WORKFLOW.length - 1 ? "<div class='step-line'></div>" : "") + "</div>" +
+        "<div class='step-body'><div class='step-top'><span class='step-title'>" + s.title + "</span><span class='step-tag'>queued</span></div>" +
+        "<div class='step-meta'>" + s.agent + "</div><div class='step-detail'></div></div>";
+      tl.appendChild(d);
+      return d;
+    });
+
+    function setStepState(i, state, detail) {
+      var el = stepEls[i];
+      el.className = "step visible state-" + state;
+      el.querySelector(".step-tag").textContent = state === "approval" ? "needs approval" : state;
+      if (detail) el.querySelector(".step-detail").textContent = detail;
+    }
+
+    var i = 0;
+    function next() {
+      if (i >= WORKFLOW.length) return finish();
+      var s = WORKFLOW[i];
+      setStepState(i, "running");
+      if (s.agentId) activeAgentIds = [s.agentId];
+      drawNetwork();
+
+      setTimeout(function () {
+        if (s.approval) {
+          setStepState(i, "approval", s.detail);
+          APPROVALS.unshift({ id: "run-approval", title: "Include customer financial data in externally-shareable exec summary?", by: "Risk & Compliance Agent", risk: "High", age: "just now", _new: true });
+          renderApprovals();
+          document.getElementById("kpi-approvals-delta").textContent = "new: high risk";
+          toast("Approval required — Risk & Compliance Agent paused the workflow");
+          window.__resumeRun = function () {
+            setStepState(i, "done", s.detail);
+            activeAgentIds = [];
+            i++;
+            next();
+          };
+          return; // pause here until approved via renderApprovals -> decide()
+        }
+        setStepState(i, "done", s.detail);
+        var a = AGENTS.find(function (x) { return x.id === s.agentId; });
+        if (a) a.status = "done";
+        i++;
+        next();
+      }, s.ms);
+    }
+    next();
+
+    function finish() {
+      running = false;
+      btn.disabled = false;
+      btn.innerHTML = "<span>▶</span> Orchestrate";
+      activeAgentIds = [];
+      AGENTS.forEach(function (a) { a.status = null; });
+      drawNetwork();
+
+      document.getElementById("kpi-workflows").textContent = "3";
+      document.getElementById("kpi-workflows-delta").textContent = "completed";
+      document.getElementById("kpi-workflows-delta").className = "delta";
+
+      var hours = 42 + Math.floor(Math.random() * 10);
+      var cost = (hours * 78);
+      document.getElementById("roi-hours").textContent = hours + " hrs";
+      document.getElementById("roi-cost").textContent = "$" + cost.toLocaleString();
+      document.getElementById("roi-cycle").textContent = "3 wks → 21 min";
+      drawROI(hours);
+
+      var newTotal = 412 + hours;
+      document.getElementById("kpi-time").innerHTML = newTotal + " <small>hrs</small>";
+      document.getElementById("kpi-time-delta").textContent = "+" + hours + " from this run";
+      var newImpact = (184200 + cost);
+      document.getElementById("kpi-impact").textContent = "$" + (newImpact / 1000).toFixed(1) + "k";
+      document.getElementById("kpi-impact-delta").textContent = "+$" + cost.toLocaleString() + " from this run";
+
+      renderDeliverable();
+      var dw = document.getElementById("deliverable-wrap");
+      dw.classList.add("show");
+      dw.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+      toast("Executive Action Plan ready — routed for review");
+    }
+  });
+
+  /* ---------------- deliverable render ---------------- */
+  function renderDeliverable() {
+    document.getElementById("deliv-summary").textContent =
+      "Across Finance, Operations, and Customer Success, the orchestrated review found gross margin compression concentrated in one business unit, a single approval step responsible for most process cycle-time variance, and an elevated customer churn signal tied to support response time. The plan below prioritizes three interventions expected to recover an estimated $210k in annualized margin within two quarters, alongside one governance flag requiring redaction before the report is shared outside the executive team.";
+
+    var findings = [
+      "<b>Margin compression</b> — 4.6 point gross margin decline in the Northeast segment over two quarters, driven by discounting, per the Finance Agent's reconciliation of ERP and financial-report data.",
+      "<b>Cycle-time bottleneck</b> — a single manual approval step accounts for 61% of total cycle time across reviewed workflows, per the Operations Agent's process mapping.",
+      "<b>Churn signal</b> — accounts with support response times over 48 hours show 2.3x higher 90-day churn, per the Research Agent's CRM and ticketing analysis.",
+      "<b>Governance exposure</b> — the initial draft referenced customer-level financials in an externally shareable section; the Risk & Compliance Agent flagged this for human approval before publication."
+    ];
+    document.getElementById("deliv-findings").innerHTML = findings.map(function (f) { return "<li>" + f + "</li>"; }).join("");
+
+    var recs = [
+      ["Automate the manual approval step identified in Operations", "VP Operations", "Pilot automated routing for low-risk approvals in Q3", "High"],
+      ["Rebalance Northeast segment discounting policy", "CFO", "Review discount authority thresholds with regional sales leads", "High"],
+      ["Introduce a 24-hour SLA for at-risk accounts", "VP Customer Success", "Route flagged accounts to senior support within one business day", "Medium"]
+    ];
+    document.getElementById("deliv-recs").innerHTML = recs.map(function (r) {
+      return "<tr><td>" + r[0] + "</td><td>" + r[1] + "</td><td>" + r[2] + "</td><td><span class='priority-pill'>" + r[3] + "</span></td></tr>";
+    }).join("");
+
+    document.getElementById("deliv-risks").innerHTML =
+      "<li>Customer-level financial detail in the draft summary requires redaction before it leaves the executive workspace — pending approval, resolved in this run.</li>" +
+      "<li>Recommendations rely on 90 days of trailing data; confidence is medium on the churn correlation pending a larger sample.</li>";
+
+    var now = new Date();
+    function ts(offsetSec) { var d = new Date(now.getTime() - offsetSec * 1000); return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
+    var audit = [
+      [ts(11), "Orchestrator Core", "Decomposed objective into task graph", "—", "5 tasks assigned"],
+      [ts(10), "Research & Data Agent", "Queried ERP, CRM, financial reports", AGENTS[0].model, "1,204 records reconciled"],
+      [ts(8), "Finance Agent", "Computed margin & variance analysis", AGENTS[1].model, "Northeast compression identified"],
+      [ts(6), "Operations Agent", "Mapped process cycle times", AGENTS[2].model, "Bottleneck isolated"],
+      [ts(5), "Risk & Compliance Agent", "Screened output against governance policy", AGENTS[3].model, "1 flag raised, escalated to human"],
+      [ts(3), "Human reviewer", "Approved redaction & inclusion policy", "—", "Approved"],
+      [ts(2), "Strategy Agent", "Synthesized prioritized recommendations", AGENTS[4].model, "3 recommendations ranked"],
+      [ts(1), "Executive Writer Agent", "Drafted executive action plan", AGENTS[5].model, "Deliverable compiled"]
+    ];
+    document.getElementById("deliv-audit").innerHTML = audit.map(function (r) {
+      return "<tr><td>" + r[0] + "</td><td class='a'>" + r[1] + "</td><td>" + r[2] + "</td><td>" + r[3] + "</td><td>" + r[4] + "</td></tr>";
+    }).join("");
+  }
+
+  document.getElementById("copy-md").addEventListener("click", function () {
+    var summary = document.getElementById("deliv-summary").textContent;
+    var findings = Array.prototype.map.call(document.querySelectorAll("#deliv-findings li"), function (li) { return "- " + li.textContent; }).join("\n");
+    var md = "# " + document.getElementById("deliv-title").textContent + "\n\n## Executive Summary\n" + summary + "\n\n## Key Findings\n" + findings + "\n";
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(md).then(function () { toast("Deliverable copied as Markdown"); }, function () { toast("Copy failed — clipboard permission denied"); });
+    } else {
+      toast("Clipboard unavailable in this browser");
+    }
+  });
+
+})();
+</script>
