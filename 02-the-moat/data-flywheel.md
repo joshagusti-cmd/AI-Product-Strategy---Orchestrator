@@ -12,24 +12,24 @@
 | **Domain Context** | Does usage in one area improve quality in adjacent areas? | Siloed | Cross-domain transfer | __/5 |
 | **Network** | Does each new user / team make the product better for everyone? | Isolated | Strong network effects | __/5 |
 
-### Correction Loop - __/5
+### Correction Loop - 5/5
 **What you capture today:**
 **How it compounds:**
 
-### Preference Loop - __/5
+### Preference Loop - 4/5
 **What you capture today:**
 **How it compounds:**
 
-### Domain Context Loop - __/5
+### Domain Context Loop - 4/5
 **What you capture today:**
 **How it compounds:**
 
-### Network Loop - __/5
+### Network Loop - 5/5
 **What you capture today:**
 **How it compounds:**
 
-**Total Flywheel Score: __/20**
-**Weakest Loop:**
+**Total Flywheel Score: 18/20**
+**Weakest Loop: Preferences Loop · Domain Context Loop (tied for weakest) scored lowest (4/5). That is where a competitor will probe first, shore up capture, feedback, or proprietary data there before you scale distribution.**
 **Fix for weakest loop:**
 
 ---
