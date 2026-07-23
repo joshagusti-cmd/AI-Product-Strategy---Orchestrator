@@ -37,22 +37,22 @@
 ## Encroachment Threat Assessment
 
 ### 1. Platform Encroachment
-**Attacker:**
-**Vector:**
-**Time-to-threat:**
-**% of value at risk:**
+**Attacker:** Microsoft  
+**Vector:** Bundles multi-agent orchestration, governance, enterprise integrations, and human approvals into Copilot Studio, Microsoft 365, Azure, Teams, and Power Platform.  
+**Time-to-threat:** Immediate to 6 months  
+**% of value at risk:** 65%
 
 ### 2. Vertical Competitor
-**Attacker:**
-**Vector:**
-**Time-to-threat:**
-**% of value at risk:**
-
+**Attacker:** Decagon  
+**Vector:** Builds substantially deeper agent orchestration for customer service using proprietary conversation, resolution, escalation, CSAT, deflection, and channel-performance data.  
+**Time-to-threat:** 12 to 24 months  
+**% of value at risk:** 25% enterprise-wide; 70% within customer service  
+ 
 ### 3. Adjacent Expansion
-**Attacker:**
-**Vector:**
-**Time-to-threat:**
-**% of value at risk:**
+**Attacker:** ServiceNow  
+**Vector:** Adds vendor-neutral agent orchestration, discovery, governance, monitoring, auditability, and ROI measurement to its existing enterprise workflow platform.  
+**Time-to-threat:** Immediate  
+**% of value at risk:** 50%
 
 ---
 
