@@ -1,5 +1,11 @@
 # Cost Curve & Pricing Strategy
 
+## Packaging Decision
+Leader: transaction scanning and scam analysis likelihood. 
+Filler: transaction additional content and summary 
+Killer: transaction dispute template generator. 
+Killer usage: 
+
 ## Cost Model
 
 | Cost Category | Per-User/Month | Notes |
