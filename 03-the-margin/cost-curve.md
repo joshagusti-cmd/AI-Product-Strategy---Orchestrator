@@ -49,25 +49,35 @@ Estimate, not false precision: ~188 AI requests/user/month (150 scans + 30 summa
 
 ## Pricing Model
 
-**Current pricing:** N/A pre-launch — Aiven's current revenue is consulting/advisory engagements, not recurring software revenue.
+**Current pricing:**
+- N/A — pre-launch. Aiven's current revenue is consulting/advisory engagements, not recurring software revenue.
 
-**Proposed AI pricing:** Hybrid. A seat-based platform fee covers unlimited Leader + Filler tier usage (low marginal cost, drives adoption); the Killer tier ships with a modest included allotment and meters overage separately, since it's the one feature whose cost scales fastest with enthusiasm.
+**Proposed AI pricing:**
+- Strategy posture: Skim
+- Pricing model: Outcome / Resolution
+- Unit of work metered: Transaction scanned
+- Base fee ($/month): $49
+- Price per unit: $0.35
+- Estimated units/user/month: 150 <!-- matches the Leader-tier volume already modeled in the Cost Model above, not a fresh assumption -->
+- Implied revenue/user/month: $101.50
 
-**Model:** hybrid (seat-based base + usage-based overage on the Killer tier)
+**Decision Note:** Why this pricing structure fits the buyer and the value delivered — customers pay per transaction scanned, the unit of work that maps directly to the outcome they're buying (fraud coverage), not a flat seat fee for a tool that might sit idle. Against the $12.75 Total AI COGS modeled above, implied gross margin is ~87%. Because revenue is metered on the same unit that drives most of the cost curve, revenue and COGS scale together as a customer's volume grows — a heavier desk pays more, but margin doesn't collapse the way it would under a flat fee (see the "Heaviest segment doubles" stress test below). The Killer-tier dispute-template generator stays metered separately as overage beyond an included allotment (see Packaging Decision above) rather than folded into the per-scan price — it's the one action expensive enough on its own to need its own cap, and bundling it in would make light scanners subsidize the few who generate a lot of dispute letters.
+
+**Model:** hybrid (base fee + per-scan usage fee + separately metered Killer-tier overage)
 
 ## Stress Tests
 
 | Scenario | Impact on Margin | Response |
 |----------|-----------------|----------|
-| Inference costs 3x | Inference COGS rises from $7.80 to $23.40/seat/mo; Total AI COGS rises to ~$28.35 — at a ~$79/seat price point, gross margin falls from ~84% to ~64% | Shift Small-tier volume (80% of all requests) to an even cheaper model first, tighten the Mid-tier escalation threshold, and let Frontier-tier overage pricing absorb the rest since it's already metered |
-| Heaviest segment doubles | High-volume fraud desks running ~2x base volume (300 scans / 60 summaries / 16 drafts) push inference COGS to ~$15.60 and Total COGS to ~$21 while remaining a minority of total seats | Introduce a usage-based "Pro" tier for high-volume desks so light users aren't cross-subsidizing heavy ones |
-| Model provider raises prices 50% | Adds ~$3.90/seat/mo to inference COGS ($7.80 → $11.70); Total AI COGS rises to ~$16.65 | Model-agnostic routing (the core moat per `01-the-bet/diagnostic.md`) lets Aiven reroute the Small, Mid, or Frontier call to a competing provider within a release cycle — this is the entire reason the orchestration layer sits above any single model |
+| Inference costs 3x | Inference COGS rises from $7.80 to $23.40/seat/mo; Total AI COGS rises to ~$28.35 — at $101.50/seat implied revenue, gross margin falls from ~87% to ~72% | Shift Small-tier volume (80% of all requests) to an even cheaper model first, tighten the Mid-tier escalation threshold, and let Frontier-tier overage pricing absorb the rest since it's already metered |
+| Heaviest segment doubles | A desk running ~2x base volume (300 scans / 60 summaries / 16 drafts) pushes Total COGS to ~$21 — but because pricing is metered per scan, their revenue also roughly doubles to ~$154 ($49 base + 300 × $0.35), holding margin near ~86% instead of collapsing | The metering choice is already the mitigation here; still worth a "Pro" tier at very high volume so the base fee doesn't feel like a bait-and-switch |
+| Model provider raises prices 50% | Adds ~$3.90/seat/mo to inference COGS ($7.80 → $11.70); Total AI COGS rises to ~$16.65 — margin falls from ~87% to ~84% | Model-agnostic routing (the core moat per `01-the-bet/diagnostic.md`) lets Aiven reroute the Small, Mid, or Frontier call to a competing provider within a release cycle — this is the entire reason the orchestration layer sits above any single model |
 
 ## Board One-Pager
 <!-- Before/After: Old SaaS revenue vs. AI usage revenue for your product -->
 
 **Before (traditional SaaS):** Flat per-seat license fee, ~85–90% gross margin, revenue disconnected from how much value a customer actually extracts. Aiven's real "before" is consulting/services revenue — project-based, not recurring.
 
-**After (AI-enabled):** Seat-based platform fee plus metered overage on the single highest-cost, highest-differentiation action (dispute generation). Modeled gross margin lands close to traditional SaaS — an estimated ~84% at a $79/seat price point against $12.75 Total AI COGS — because the Killer tier, the one expensive-to-serve feature, is deliberately capped and priced separately rather than folded into the base fee.
+**After (AI-enabled):** Base fee ($49/seat) plus per-transaction-scanned metering ($0.35/unit), with the Killer-tier dispute generator metered separately as overage. At the modeled 150 scans/user/month, implied revenue is $101.50/seat against $12.75 Total AI COGS — an estimated ~87% gross margin, in line with traditional SaaS despite the added inference cost, because pricing is tied to the same unit that drives most of the cost curve.
 
-**Net margin shift:** Roughly flat to a couple of points softer than pure SaaS at baseline volume — the real margin risk isn't the blended average, it's Killer-tier usage growing faster than the included allotment, which is exactly what the stress tests above are pressure-testing.
+**Net margin shift:** Roughly flat versus pure SaaS at baseline volume, and more resilient than a flat-fee model under stress — since revenue scales with the metered unit, a heavier customer doesn't erode margin the way they would under a fixed seat price. The real margin risk isn't baseline volume, it's Killer-tier usage growing faster than its included allotment, which is exactly what the stress tests above are pressure-testing.
