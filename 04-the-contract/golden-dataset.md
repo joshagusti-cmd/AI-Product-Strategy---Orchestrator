@@ -39,15 +39,16 @@ No coverage for multi-transaction "smurfing" patterns — many small transaction
 | Drift velocity | < 5% week-over-week shift in score distribution on a stable transaction mix | Weekly comparison against a fixed reference transaction set, unaffected by real mix changes | Shift > 8% in one week, or the same direction 3 weeks running |
 
 ## HITL Architecture
-<!-- When does a human step in? What's the escalation path? -->
+<!-- When does a human enter the loop? Who reviews? Does it feed back? -->
 
-Three gates, matching the tiers above:
+**Trigger — when does a human enter the loop?**
+Entry point depends on tier. Leader-tier scoring never triggers a human — every transaction is scored automatically, which is the point of the tool. Filler-tier triggers the moment a transaction crosses the risk threshold: it auto-escalates for a contextual summary and lands in the analyst's approval queue before anything further happens. Killer-tier is the hard gate — the dispute template never generates without an explicit analyst approval action, not passive review.
 
-1. **Small tier (Leader):** scores every transaction automatically — no human involved; this is the point of the tool.
-2. **Mid tier (Filler):** any transaction crossing the risk threshold auto-escalates for a contextual summary, then lands in the analyst's approval queue. A human always reviews before anything further happens.
-3. **Frontier tier (Killer):** the hard gate. The dispute template never generates without an explicit analyst approval action — not passive review, an affirmative decision — mirroring the approval-queue pattern already built into the Orchestrator prototype's workflow timeline.
+**Reviewer — who reviews?**
+An analyst reviews everything that reaches the Mid- and Frontier-tier approval queue. Disagreement adds a second check: if an analyst overrides a Leader-tier score and that override reverses a High-risk flag specifically, it routes to a second reviewer — a check on the human side, not just the model side.
 
-**Disagreement path:** if an analyst overrides a Leader-tier score, the override is logged as a Correction Loop signal. If the override reverses a High-risk flag specifically, it routes to a second reviewer — a check on the human side, not just the model side.
+**Feedback loop — do corrections feed back into the gold set / model?**
+Yes. Every analyst override is logged as a Correction Loop signal (see 02-the-moat/data-flywheel.md), so corrections become training signal rather than one-off fixes.
 
 ## Red-Team Findings
 *What failure mode did your partner find that you missed?*
