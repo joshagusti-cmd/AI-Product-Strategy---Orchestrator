@@ -99,9 +99,9 @@
 
 **How you get this funded, shipped, and adopted.**
 
-- **Horizon 1 (Now):** design-partner pilot of the Leader + Filler flow; close the Network Intelligence loop; verify kill-switch failover in production.
-- **Horizon 2 (Next):** ship the Killer-tier dispute generator to production; build the Cross-Domain Transfer loop into AML scoring; formal legal review of the EU AI Act / GDPR posture.
-- **Horizon 3 (Bet):** expand beyond the fraud/dispute wedge into a second department vertical.
+- **Horizon 1 (Now):** move off the prototype (real model calls + persistent backend) with a design-partner pilot; close the Network Intelligence loop; verify kill-switch failover; validate pricing with real buyers; run a real Shadow AI Audit.
+- **Horizon 2 (Next):** ship the Killer-tier dispute generator to production; build the Cross-Domain Transfer loop into AML scoring; legal review + real break-even modeling; real red-team session; auth/routing/integrations buildout.
+- **Horizon 3 (Bet):** expand beyond the fraud/dispute wedge into a second department vertical; revisit the rest of `feature-ideas.md`.
 - **Board Narrative:** Aiven is the independent, model-agnostic orchestration and governance layer enterprises trust to coordinate, approve, and audit every AI agent working across their business.
 - **Key Metric:** flywheel loops active — currently 2 of 4; the moat isn't real until Cross-Domain Transfer and Network Intelligence move from missing to active.
 - **The Ask:** design-partner budget plus engineering capacity to close the two missing flywheel loops and take the Killer-tier flow from prototype to production before a well-resourced incumbent bundles equivalent governance into a footprint enterprises already have installed.

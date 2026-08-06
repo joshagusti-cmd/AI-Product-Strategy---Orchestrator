@@ -2,14 +2,18 @@
 
 ## Roadmap
 
+*Mapped from a 26-item backlog against the five README components (The Bet/Moat/Margin/Contract/Guardrails) — full backlog in `06-the-pitch/backlog.md`, not duplicated here. This table is the curated, board-facing distillation, not a 1:1 restatement.*
+
 ### Horizon 1 — Now (0-3 months)
 *Quick wins. Ship with existing capabilities.*
 
 | Initiative | Metric | Confidence |
 |-----------|--------|-----------|
-| Pilot the Leader-tier scan + Filler-tier summary flow with 1–2 design-partner fraud desks | ≥92% score accuracy in production, matching the Reliability Contract target (`04-the-contract/golden-dataset.md`) | H |
-| Close the Network Intelligence feedback loop — route customer-service reports into the same training pipeline Recursive Learning already uses | Loop status flips missing → active; Total Flywheel Score rises from 18/20 | M |
+| Move off the prototype: real model API calls + a persistent backend, piloted with 1–2 design-partner fraud desks running the Leader + Filler flow | ≥92% score accuracy in production, matching the Reliability Contract target (`04-the-contract/golden-dataset.md`) | H |
+| Close the Network Intelligence feedback loop, and fix the Domain Context Loop scoring inconsistency while we're in that file | Loop status flips missing → active; Total Flywheel Score corrected and rising from 18/20 | M |
 | Move kill-switch readiness from architecture to a verified drill | Confirmed <48h secondary-provider swap under real load, not just on paper | H |
+| Validate the pricing model in real buyer conversations | Signed design-partner agreement at or near the $101.50/user/month modeled price | M |
+| Run a real Shadow AI Audit at the design partner, replacing the illustrative placeholder in `05-the-guardrails/compounding-system.md` | Real tools-found / triaged / hidden-spend numbers on record | H |
 
 ### Horizon 2 — Next (3-9 months)
 *Bets. Requires new capabilities or integrations.*
@@ -18,7 +22,10 @@
 |-----------|--------|-----------|
 | Ship the Killer-tier dispute-template generator to production with the two-gate approval flow live | Sustained <1% hallucination rate at ~8 drafts/user/month, per the modeled Killer-tier volume | M |
 | Build the Cross-Domain Transfer loop — extend Leader-tier scam-likelihood signal into anti-money-laundering scoring | Loop status flips missing → active; a second production use case running off the same signal | M |
-| Formal legal review of the EU AI Act / GDPR risk-tier read drafted in Module 5, ahead of any EU design partner | Signed-off classification replacing the current draft caveat | H |
+| Formal legal review of the EU AI Act / GDPR risk-tier read, and model real break-even economics (CAC + fixed opex) | Signed-off classification replacing the current draft caveat; a real break-even figure replacing "not yet modeled" | H |
+| Run a real red-team session with a partner | At least one new failure mode found and folded into the golden dataset, replacing the current draft finding | H |
+| Ship real auth/multi-tenancy (SSO/RBAC), cost-based model routing, and the core integrations catalog (NetSuite, Salesforce, Zendesk, Snowflake, Workday) | First design partner fully self-serve, no manual data wiring | M |
+| Slack/Teams-native approval actions | Analyst approval turnaround time drops measurably vs. in-app-only queue | L |
 
 ### Horizon 3 — Bet (9-18 months)
 *Moonshots. High uncertainty, high potential.*
@@ -26,6 +33,7 @@
 | Initiative | Metric | Confidence |
 |-----------|--------|-----------|
 | Expand the orchestration layer beyond the fraud/dispute wedge into a second department vertical (e.g. the Customer Success churn-signal capability from the original Orchestrator concept) | First paying logo outside the fraud/dispute vertical | L |
+| Everything else still sitting in `feature-ideas.md` and not triaged above — drill-down analytics, workflow history, natural-language audit-trail Q&A, mobile approvals, saved objective templates, in-product kill-switch messaging | Revisit once Horizon 1 and 2 are proven, not before | L |
 
 ## Board Pitch
 
