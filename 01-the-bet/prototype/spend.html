@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Model Spend — Aiven Orchestrator</title>
+<meta name="description" content="Org-wide model spend broken out by tier and provider, tied to the cascading Leader/Filler/Killer pricing model.">
+<link rel="stylesheet" href="assets/shared.css">
+<style>
+  .kpi-strip { grid-template-columns: repeat(4, 1fr); }
+  .grid-two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 18px; align-items: start; }
+  .bar-row { display: flex; align-items: center; gap: 10px; font-size: 12px; padding: 10px 18px; border-bottom: 1px solid var(--border-soft); }
+  .bar-row:last-child { border-bottom: none; }
+  .bar-row .label { width: 110px; flex-shrink: 0; }
+  .bar-row .bar { flex: 1; height: 8px; background: var(--surface-sunken); border: 1px solid var(--border-soft); position: relative; }
+  .bar-row .bar i { position: absolute; inset: 0; background: var(--accent); }
+  .bar-row .bar.leader i { background: var(--success); }
+  .bar-row .bar.filler i { background: var(--running); }
+  .bar-row .bar.killer i { background: var(--critical); }
+  .bar-row .pct { font-family: var(--mono); font-size: 11px; width: 40px; text-align: right; flex-shrink: 0; }
+  @media (max-width: 980px) { .kpi-strip { grid-template-columns: repeat(2, 1fr); } .grid-two { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body data-page="spend">
+<script>document.documentElement.setAttribute("data-theme", "dark");</script>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="index.html">
+      <div class="brand-mark"></div>
+      <div class="brand-text"><span class="name">AIVEN ORCHESTRATOR</span><span class="sub">Agent governance console</span></div>
+    </a>
+    <div class="model-rail">
+      <div class="model-chip"><span class="dot"></span>Anthropic</div>
+      <div class="model-chip"><span class="dot"></span>OpenAI</div>
+      <div class="model-chip"><span class="dot"></span>Google</div>
+      <div class="status-live"><span class="dot"></span>LIVE</div>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle color theme">MODE</button>
+    </div>
+  </div>
+</div>
+<div class="subnav">
+  <div class="subnav-inner">
+    <a href="index.html" data-page="command">Command Center</a>
+    <a href="agents.html" data-page="agents">Agent Registry</a>
+    <a href="policies.html" data-page="policies">Policies</a>
+    <a href="approvals.html" data-page="approvals">Approval Queue</a>
+    <a href="audit.html" data-page="audit">Audit Trail</a>
+    <a href="spend.html" data-page="spend">Model Spend</a>
+    <a href="shadow-ai.html" data-page="shadow">Shadow AI Audit</a>
+  </div>
+</div>
+
+<div class="shell">
+  <div class="page-head">
+    <h1>&gt; Model Spend Dashboard</h1>
+    <p>Modeled cost and revenue for the cascading Leader/Filler/Killer pricing strategy — see <code>03-the-margin/cost-curve.md</code> for the full worksheet this rolls up from. The provider mix below tracks the agents' currently assigned models, so reassigning a model on the Agent Registry or Command Center shifts this chart.</p>
+  </div>
+
+  <section class="kpi-strip" aria-label="Spend metrics">
+    <div class="kpi"><div class="eyebrow">Pricing</div><div class="val" style="font-size:17px;">$49 <small>+ $0.35/scan</small></div><div class="delta">base + usage</div></div>
+    <div class="kpi"><div class="eyebrow">Implied revenue</div><div class="val tabular">$101.50 <small>/ user / mo</small></div><div class="delta up">at modeled volume</div></div>
+    <div class="kpi"><div class="eyebrow">Total COGS</div><div class="val tabular">$12.75 <small>/ user / mo</small></div><div class="delta">across all 3 tiers</div></div>
+    <div class="kpi"><div class="eyebrow">Gross margin</div><div class="val tabular">~87%</div><div class="delta up">AI-adjusted</div></div>
+  </section>
+
+  <section class="grid-two">
+    <div class="panel">
+      <div class="panel-head"><div><h2>Cost by tier</h2><div class="hint">Share of transaction volume vs. share of total COGS.</div></div></div>
+      <div class="panel-body tight" id="tier-bars"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><div><h2>Cost by model provider</h2><div class="hint">Derived live from the Agent Registry's current model assignments.</div></div></div>
+      <div class="panel-body tight" id="provider-bars"></div>
+    </div>
+  </section>
+
+  <section class="panel" style="margin-top:18px;">
+    <div class="panel-head"><div><h2>Cascading strategy</h2><div class="hint">Small tier scores every transaction; Mid tier drafts contextual summaries once risk clears the threshold; Frontier tier drafts dispute templates, gated behind explicit human approval.</div></div></div>
+    <div class="panel-body tight scroll-x">
+      <table class="data">
+        <thead><tr><th>Tier</th><th>Role</th><th>Share of volume</th><th>Modeled COGS / user / mo</th><th>% of total COGS</th></tr></thead>
+        <tbody>
+          <tr><td><span class="tier-pill Leader">Leader</span></td><td>Scores every transaction (Small model)</td><td class="tabular">80%</td><td class="tabular">$3.50</td><td class="tabular">27%</td></tr>
+          <tr><td><span class="tier-pill Filler">Filler</span></td><td>Drafts contextual summary once risk clears threshold (Mid model)</td><td class="tabular">16%</td><td class="tabular">$4.25</td><td class="tabular">33%</td></tr>
+          <tr><td><span class="tier-pill Killer">Killer</span></td><td>Drafts dispute template, gated behind explicit approval (Frontier model)</td><td class="tabular">4%</td><td class="tabular">$5.00</td><td class="tabular">40%</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <span>Aiven Consulting Group — prototype build, simulated data · <button class="reset-link" id="reset-demo" type="button">Reset demo data</button></span>
+    <span id="clock" class="tabular"></span>
+  </footer>
+</div>
+
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<script src="assets/data.js"></script>
+<script>
+(function () {
+  "use strict";
+  Aiven.initChrome();
+  var state = Aiven.getState();
+  var TOTAL_COGS = 12.75;
+
+  function renderTierBars() {
+    var tiers = [
+      { name: "Leader", cls: "leader", volume: 80, cogsPct: 27 },
+      { name: "Filler", cls: "filler", volume: 16, cogsPct: 33 },
+      { name: "Killer", cls: "killer", volume: 4, cogsPct: 40 }
+    ];
+    var wrap = document.getElementById("tier-bars");
+    wrap.innerHTML = tiers.map(function (t) {
+      return "<div class='bar-row'><span class='label'>" + t.name + " · volume</span><div class='bar " + t.cls + "'><i style='width:" + t.volume + "%'></i></div><span class='pct tabular'>" + t.volume + "%</span></div>" +
+        "<div class='bar-row'><span class='label'>" + t.name + " · COGS</span><div class='bar " + t.cls + "'><i style='width:" + t.cogsPct + "%'></i></div><span class='pct tabular'>" + t.cogsPct + "%</span></div>";
+    }).join("");
+  }
+
+  function providerOf(model) {
+    if (model.indexOf("Claude") === 0) return "Anthropic";
+    if (model.indexOf("GPT") === 0) return "OpenAI";
+    if (model.indexOf("Gemini") === 0) return "Google";
+    return "Other";
+  }
+
+  function renderProviderBars() {
+    var counts = {};
+    state.agents.forEach(function (a) {
+      var p = providerOf(a.model);
+      counts[p] = (counts[p] || 0) + 1;
+    });
+    var total = state.agents.length;
+    var order = ["Anthropic", "OpenAI", "Google", "Other"];
+    var clsMap = { Anthropic: "leader", OpenAI: "filler", Google: "killer", Other: "" };
+    var wrap = document.getElementById("provider-bars");
+    wrap.innerHTML = order.filter(function (p) { return counts[p]; }).map(function (p) {
+      var pct = Math.round((counts[p] / total) * 100);
+      var dollars = ((counts[p] / total) * TOTAL_COGS).toFixed(2);
+      return "<div class='bar-row'><span class='label'>" + p + "</span><div class='bar " + clsMap[p] + "'><i style='width:" + pct + "%'></i></div>" +
+        "<span class='pct tabular'>$" + dollars + "</span></div>";
+    }).join("");
+  }
+
+  renderTierBars();
+  renderProviderBars();
+})();
+</script>
+</body>
+</html>
