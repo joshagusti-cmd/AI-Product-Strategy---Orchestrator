@@ -70,12 +70,13 @@
 
 <div class="toast-wrap" id="toast-wrap"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script src="assets/data.js"></script>
 <script>
 (function () {
   "use strict";
   Aiven.initChrome();
-  var state = Aiven.getState();
+  var state = { policies: [] };
   var AUTONOMY = ["Autonomous", "Advisory", "Approval-required", "Two-gate"];
 
   function renderKpis() {
@@ -111,31 +112,44 @@
       var range = card.querySelector(".threshold-range");
       var val = card.querySelector(".threshold-val");
       range.addEventListener("input", function () { val.textContent = range.value; });
-      card.querySelector(".save-policy").addEventListener("click", function () {
+      var saveBtn = card.querySelector(".save-policy");
+      saveBtn.addEventListener("click", async function () {
         var p = state.policies.find(function (x) { return x.id === id; });
         var newAutonomy = card.querySelector(".autonomy-select").value;
         var newThreshold = Number(range.value);
         var newEscalation = card.querySelector(".escalation-text").value.trim();
         var changed = (newAutonomy !== p.autonomy) || (newThreshold !== p.riskThreshold) || (newEscalation !== p.escalation);
-        p.autonomy = newAutonomy;
-        p.riskThreshold = newThreshold;
-        p.escalation = newEscalation;
-        p.updatedAt = new Date().toISOString().slice(0, 10);
-        Aiven.setState(function () {});
-        Aiven.toast(changed ? p.label + " updated — logged to audit trail" : p.label + " saved (no changes)");
-        if (changed) {
-          Aiven.addAudit({ actor: "Compliance owner", model: "—", risk: "—",
-            action: "Updated policy: " + p.label,
-            detail: "Autonomy: " + p.autonomy + " · Escalation threshold: " + p.riskThreshold + "." });
+        saveBtn.disabled = true;
+        try {
+          await Aiven.savePolicy(id, { autonomy: newAutonomy, riskThreshold: newThreshold, escalation: newEscalation });
+          p.autonomy = newAutonomy;
+          p.riskThreshold = newThreshold;
+          p.escalation = newEscalation;
+          p.updatedAt = new Date().toISOString().slice(0, 10);
+          Aiven.toast(changed ? p.label + " updated — logged to audit trail" : p.label + " saved (no changes)");
+          if (changed) {
+            await Aiven.addAudit({ actor: "Compliance owner", model: "—", risk: "—",
+              action: "Updated policy: " + p.label,
+              detail: "Autonomy: " + p.autonomy + " · Escalation threshold: " + p.riskThreshold + "." });
+          }
+          renderKpis();
+          card.querySelector(".updated").textContent = "Last updated " + p.updatedAt;
+        } catch (e) {
+          Aiven.toast("Couldn't save " + p.label + ": " + e.message);
+        } finally {
+          saveBtn.disabled = false;
         }
-        renderKpis();
-        card.querySelector(".updated").textContent = "Last updated " + p.updatedAt;
       });
     });
   }
 
-  renderKpis();
-  renderGrid();
+  Aiven.loadState().then(function (s) {
+    state = s;
+    renderKpis();
+    renderGrid();
+  }).catch(function (e) {
+    Aiven.toast("Couldn't load policies: " + e.message);
+  });
 })();
 </script>
 </body>

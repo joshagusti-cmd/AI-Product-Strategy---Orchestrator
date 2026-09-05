@@ -85,12 +85,13 @@
 
 <div class="toast-wrap" id="toast-wrap"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script src="assets/data.js"></script>
 <script>
 (function () {
   "use strict";
   Aiven.initChrome();
-  var state = Aiven.getState();
+  var state = { shadowTools: [] };
 
   var SCAN_POOL = [
     { id: "sh4", name: "Marketing team's unsanctioned Gemini browser extension used to draft social copy", owner: "Marketing (unmanaged)", risk: "Low",
@@ -122,39 +123,57 @@
     }).join("");
 
     Array.prototype.forEach.call(body.querySelectorAll("button[data-decision]"), function (btn) {
-      btn.addEventListener("click", function () {
+      btn.addEventListener("click", async function () {
         var t = state.shadowTools.find(function (x) { return x.id === btn.dataset.id; });
-        t.decision = btn.dataset.decision;
-        Aiven.setState(function () {});
-        Aiven.addAudit({ actor: "Compliance / Audit Agent", model: "—", risk: t.risk,
-          action: (t.decision === "govern" ? "Governed shadow AI tool: " : "Killed shadow AI tool: ") + t.name,
-          detail: "Owner: " + t.owner + "." });
-        Aiven.toast(t.decision === "govern" ? "Brought under governance — logged to audit trail" : "Access killed — logged to audit trail");
-        renderKpis();
-        renderTable();
+        var decision = btn.dataset.decision;
+        Array.prototype.forEach.call(body.querySelectorAll("button[data-decision][data-id='" + t.id + "']"), function (b) { b.disabled = true; });
+        try {
+          await Aiven.decideShadowTool(t.id, decision);
+          t.decision = decision;
+          await Aiven.addAudit({ actor: "Compliance / Audit Agent", model: "—", risk: t.risk,
+            action: (t.decision === "govern" ? "Governed shadow AI tool: " : "Killed shadow AI tool: ") + t.name,
+            detail: "Owner: " + t.owner + "." });
+          Aiven.toast(t.decision === "govern" ? "Brought under governance — logged to audit trail" : "Access killed — logged to audit trail");
+          renderKpis();
+          renderTable();
+        } catch (e) {
+          Aiven.toast("Couldn't record decision: " + e.message);
+          renderTable();
+        }
       });
     });
   }
 
-  document.getElementById("run-scan").addEventListener("click", function () {
-    var idx = state.shadowScanCount;
-    if (idx >= SCAN_POOL.length) {
+  document.getElementById("run-scan").addEventListener("click", async function () {
+    var found = SCAN_POOL.find(function (p) { return !state.shadowTools.some(function (t) { return t.id === p.id; }); });
+    if (!found) {
       Aiven.toast("Scan complete — no new unmanaged tool use found this pass");
       return;
     }
-    var found = SCAN_POOL[idx];
-    state.shadowTools.push({ id: found.id, name: found.name, owner: found.owner, risk: found.risk, decision: "undecided", note: found.note });
-    state.shadowScanCount = idx + 1;
-    Aiven.setState(function () {});
-    Aiven.addAudit({ actor: "Shadow AI scan", model: "—", risk: found.risk,
-      action: "Discovered unmanaged tool: " + found.name, detail: "Owner: " + found.owner + " — awaiting triage." });
-    Aiven.toast("Scan found 1 new unmanaged tool — awaiting triage");
-    renderKpis();
-    renderTable();
+    var scanBtn = this;
+    scanBtn.disabled = true;
+    try {
+      await Aiven.addShadowTool(found);
+      state.shadowTools.push({ id: found.id, name: found.name, owner: found.owner, risk: found.risk, decision: "undecided", note: found.note });
+      await Aiven.addAudit({ actor: "Shadow AI scan", model: "—", risk: found.risk,
+        action: "Discovered unmanaged tool: " + found.name, detail: "Owner: " + found.owner + " — awaiting triage." });
+      Aiven.toast("Scan found 1 new unmanaged tool — awaiting triage");
+      renderKpis();
+      renderTable();
+    } catch (e) {
+      Aiven.toast("Scan failed: " + e.message);
+    } finally {
+      scanBtn.disabled = false;
+    }
   });
 
-  renderKpis();
-  renderTable();
+  Aiven.loadState().then(function (s) {
+    state = s;
+    renderKpis();
+    renderTable();
+  }).catch(function (e) {
+    Aiven.toast("Couldn't load the Shadow AI Audit: " + e.message);
+  });
 })();
 </script>
 </body>

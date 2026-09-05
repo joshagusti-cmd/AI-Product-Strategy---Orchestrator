@@ -513,6 +513,7 @@
 
 <div class="toast-wrap" id="toast-wrap"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script src="assets/data.js"></script>
 <script>
 (function () {
@@ -824,7 +825,7 @@
         actor: "Human reviewer", risk: a.risk, model: "—",
         action: (decision === "approved" ? "Approved: " : "Rejected: ") + a.title,
         detail: "Decided via the Command Center's live-run approval panel."
-      });
+      }).catch(function (e) { console.error("Failed to log audit entry", e); });
     }
     if (id === "run-approval" && decision === "approved" && window.__resumeRun) {
       window.__resumeRun();
@@ -847,22 +848,25 @@
   }
   renderRisks();
 
-  /* ---------------- orchestration run ---------------- */
-  var WORKFLOW = [
-    { id: "decompose", agent: "Orchestrator Core", agentId: null, title: "Decompose objective into a task graph", detail: "Identified 5 downstream tasks across Research, Finance, Operations, Risk, Strategy, and Writer agents.", ms: 900 },
-    { id: "research", agent: "Research & Data Agent", agentId: "research", title: "Pull and reconcile source data", detail: "Queried selected data sources and normalized records for downstream analysis.", ms: 2200 },
-    { id: "finance", agent: "Finance Agent", agentId: "finance", title: "Analyze cost structure and margin trends", detail: "Found gross margin compression concentrated in one business unit over the last two quarters.", ms: 2000 },
-    { id: "ops", agent: "Operations Agent", agentId: "ops", title: "Map process cycle times and bottlenecks", detail: "Identified a single approval step accounting for the majority of cycle-time variance.", ms: 2000 },
-    { id: "risk", agent: "Risk & Compliance Agent", agentId: "risk", title: "Screen findings against governance policy", detail: "Flagged one high-risk item requiring human approval before inclusion in the report.", ms: 1800, approval: true },
-    { id: "strategy", agent: "Strategy Agent", agentId: "strategy", title: "Synthesize recommendations", detail: "Prioritized three recommendations by estimated impact and effort.", ms: 1900 },
-    { id: "writer", agent: "Executive Writer Agent", agentId: "writer", title: "Draft the executive action plan", detail: "Compiled findings, recommendations, risk flags, and audit trail into a governed deliverable.", ms: 1700 },
-    { id: "final", agent: "Orchestrator Core", agentId: null, title: "Finalize and route for distribution", detail: "Deliverable compiled and staged for executive review.", ms: 700 }
-  ];
+  /* ---------------- orchestration run (real Claude call via Edge Function) ---------------- */
+  var AGENT_LABELS = {
+    research: "Research & Data Agent", finance: "Finance Agent", ops: "Operations Agent",
+    risk: "Risk & Compliance Agent", strategy: "Strategy Agent", writer: "Executive Writer Agent"
+  };
 
   var btn = document.getElementById("orchestrate-btn");
   var running = false;
 
-  btn.addEventListener("click", function () {
+  function resetRunButtons() {
+    running = false;
+    btn.disabled = false;
+    btn.innerHTML = "<span>▶</span> Orchestrate";
+    activeAgentIds = [];
+    AGENTS.forEach(function (a) { a.status = null; });
+    drawNetwork();
+  }
+
+  btn.addEventListener("click", async function () {
     if (running) return;
     running = true;
     btn.disabled = true;
@@ -876,13 +880,50 @@
     activeAgentIds = [];
 
     var tl = document.getElementById("timeline");
-    var stepEls = WORKFLOW.map(function (s, i) {
+    var loadingEl = document.createElement("div");
+    loadingEl.className = "step visible state-running";
+    loadingEl.innerHTML =
+      "<div class='step-marker'><div class='step-dot'></div></div>" +
+      "<div class='step-body'><div class='step-top'><span class='step-title'>Calling Claude to orchestrate this objective…</span><span class='step-tag'>running</span></div>" +
+      "<div class='step-meta'>Orchestrator Core</div><div class='step-detail'>Real model call in progress — this can take 10–30 seconds.</div></div>";
+    tl.appendChild(loadingEl);
+
+    var objective = document.getElementById("objective").value;
+    var depts = DEPTS.filter(function (d) { return d.on; }).map(function (d) { return d.name; });
+    var srcs = SOURCES.filter(function (s) { return s.on; }).map(function (s) { return s.name; });
+
+    var response;
+    try {
+      response = await Aiven.orchestrate(objective, depts, srcs);
+    } catch (err) {
+      loadingEl.remove();
+      document.getElementById("timeline-empty").style.display = "";
+      document.getElementById("kpi-workflows").textContent = "3";
+      document.getElementById("kpi-workflows-delta").textContent = "steady";
+      document.getElementById("kpi-workflows-delta").className = "delta";
+      resetRunButtons();
+      toast("Orchestration failed: " + err.message);
+      return;
+    }
+    loadingEl.remove();
+
+    var result = response.result || {};
+    var steps = result.steps || [];
+    if (!steps.length) {
+      document.getElementById("timeline-empty").style.display = "";
+      document.getElementById("kpi-workflows").textContent = "3";
+      resetRunButtons();
+      toast("Orchestration returned no steps — try again.");
+      return;
+    }
+
+    var stepEls = steps.map(function (s, i) {
       var d = document.createElement("div");
       d.className = "step state-queued";
       d.innerHTML =
-        "<div class='step-marker'><div class='step-dot'></div>" + (i < WORKFLOW.length - 1 ? "<div class='step-line'></div>" : "") + "</div>" +
+        "<div class='step-marker'><div class='step-dot'></div>" + (i < steps.length - 1 ? "<div class='step-line'></div>" : "") + "</div>" +
         "<div class='step-body'><div class='step-top'><span class='step-title'>" + s.title + "</span><span class='step-tag'>queued</span></div>" +
-        "<div class='step-meta'>" + s.agent + "</div><div class='step-detail'></div></div>";
+        "<div class='step-meta'>" + (s.agentName || AGENT_LABELS[s.agentId] || s.agentId) + "</div><div class='step-detail'></div></div>";
       tl.appendChild(d);
       return d;
     });
@@ -896,19 +937,23 @@
 
     var i = 0;
     function next() {
-      if (i >= WORKFLOW.length) return finish();
-      var s = WORKFLOW[i];
+      if (i >= steps.length) return finish();
+      var s = steps[i];
       setStepState(i, "running");
       if (s.agentId) activeAgentIds = [s.agentId];
       drawNetwork();
 
       setTimeout(function () {
-        if (s.approval) {
+        if (s.riskFlag && s.riskFlag.text) {
           setStepState(i, "approval", s.detail);
-          APPROVALS.unshift({ id: "run-approval", title: "Include customer financial data in externally-shareable exec summary?", by: "Risk & Compliance Agent", risk: "High", age: "just now", _new: true });
+          APPROVALS.unshift({
+            id: "run-approval", title: s.riskFlag.text,
+            by: s.agentName || AGENT_LABELS[s.agentId] || "Risk & Compliance Agent",
+            risk: s.riskFlag.severity || "High", age: "just now", _new: true
+          });
           renderApprovals();
-          document.getElementById("kpi-approvals-delta").textContent = "new: high risk";
-          toast("Approval required — Risk & Compliance Agent paused the workflow");
+          document.getElementById("kpi-approvals-delta").textContent = "new: " + (s.riskFlag.severity || "High").toLowerCase() + " risk";
+          toast("Approval required — " + (s.agentName || "Risk & Compliance Agent") + " paused the workflow");
           window.__resumeRun = function () {
             setStepState(i, "done", s.detail);
             activeAgentIds = [];
@@ -922,18 +967,12 @@
         if (a) a.status = "done";
         i++;
         next();
-      }, s.ms);
+      }, 550 + Math.random() * 450);
     }
     next();
 
     function finish() {
-      running = false;
-      btn.disabled = false;
-      btn.innerHTML = "<span>▶</span> Orchestrate";
-      activeAgentIds = [];
-      AGENTS.forEach(function (a) { a.status = null; });
-      drawNetwork();
-
+      resetRunButtons();
       document.getElementById("kpi-workflows").textContent = "3";
       document.getElementById("kpi-workflows-delta").textContent = "completed";
       document.getElementById("kpi-workflows-delta").className = "delta";
@@ -952,58 +991,45 @@
       document.getElementById("kpi-impact").textContent = "$" + (newImpact / 1000).toFixed(1) + "k";
       document.getElementById("kpi-impact-delta").textContent = "+$" + cost.toLocaleString() + " from this run";
 
-      renderDeliverable();
+      renderDeliverable(result, objective);
       var dw = document.getElementById("deliverable-wrap");
       dw.classList.add("show");
       dw.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
-      toast("Executive Action Plan ready — routed for review");
+      toast("Executive Action Plan ready — routed for review (real Claude call · " + (response.model || "model unknown") + ")");
 
       Aiven.addAudit({
-        actor: "Executive Writer Agent", model: AGENTS[5].model, risk: "—",
-        action: "Drafted the executive action plan for: “" + document.getElementById("objective").value + "”",
-        detail: "Deliverable compiled and staged for executive review. See Audit Trail for the full log."
-      });
+        actor: "Executive Writer Agent", model: response.model || AGENTS[5].model, risk: "—",
+        action: "Drafted the executive action plan for: “" + objective + "”",
+        detail: "Real Claude orchestration run. Deliverable compiled and staged for executive review. See Audit Trail for the full log."
+      }).catch(function (e) { console.error("Failed to log audit entry", e); });
     }
   });
 
-  /* ---------------- deliverable render ---------------- */
-  function renderDeliverable() {
-    document.getElementById("deliv-summary").textContent =
-      "Across Finance, Operations, and Customer Success, the orchestrated review found gross margin compression concentrated in one business unit, a single approval step responsible for most process cycle-time variance, and an elevated customer churn signal tied to support response time. The plan below prioritizes three interventions expected to recover an estimated $210k in annualized margin within two quarters, alongside one governance flag requiring redaction before the report is shared outside the executive team.";
+  /* ---------------- deliverable render (real content from the model) ---------------- */
+  function renderDeliverable(result, objective) {
+    document.getElementById("deliv-title").textContent = objective || "Executive Action Plan";
+    document.getElementById("deliv-summary").textContent = result.executiveSummary || "";
 
-    var findings = [
-      "<b>Margin compression</b> — 4.6 point gross margin decline in the Northeast segment over two quarters, driven by discounting, per the Finance Agent's reconciliation of ERP and financial-report data.",
-      "<b>Cycle-time bottleneck</b> — a single manual approval step accounts for 61% of total cycle time across reviewed workflows, per the Operations Agent's process mapping.",
-      "<b>Churn signal</b> — accounts with support response times over 48 hours show 2.3x higher 90-day churn, per the Research Agent's CRM and ticketing analysis.",
-      "<b>Governance exposure</b> — the initial draft referenced customer-level financials in an externally shareable section; the Risk & Compliance Agent flagged this for human approval before publication."
-    ];
-    document.getElementById("deliv-findings").innerHTML = findings.map(function (f) { return "<li>" + f + "</li>"; }).join("");
+    document.getElementById("deliv-findings").innerHTML =
+      (result.findings || []).map(function (f) { return "<li>" + f + "</li>"; }).join("") ||
+      "<li>No findings returned.</li>";
 
-    var recs = [
-      ["Automate the manual approval step identified in Operations", "VP Operations", "Pilot automated routing for low-risk approvals in Q3", "High"],
-      ["Rebalance Northeast segment discounting policy", "CFO", "Review discount authority thresholds with regional sales leads", "High"],
-      ["Introduce a 24-hour SLA for at-risk accounts", "VP Customer Success", "Route flagged accounts to senior support within one business day", "Medium"]
-    ];
-    document.getElementById("deliv-recs").innerHTML = recs.map(function (r) {
-      return "<tr><td>" + r[0] + "</td><td>" + r[1] + "</td><td>" + r[2] + "</td><td><span class='priority-pill'>" + r[3] + "</span></td></tr>";
+    document.getElementById("deliv-recs").innerHTML = (result.recommendations || []).map(function (r) {
+      return "<tr><td>" + r.text + "</td><td>" + r.owner + "</td><td>" + r.nextStep + "</td><td><span class='priority-pill'>" + r.priority + "</span></td></tr>";
     }).join("");
 
     document.getElementById("deliv-risks").innerHTML =
-      "<li>Customer-level financial detail in the draft summary requires redaction before it leaves the executive workspace — pending approval, resolved in this run.</li>" +
-      "<li>Recommendations rely on 90 days of trailing data; confidence is medium on the churn correlation pending a larger sample.</li>";
+      (result.riskFlags || []).map(function (r) { return "<li>" + r + "</li>"; }).join("") ||
+      "<li>No risk flags returned.</li>";
 
+    var steps = result.steps || [];
     var now = new Date();
-    function ts(offsetSec) { var d = new Date(now.getTime() - offsetSec * 1000); return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
-    var audit = [
-      [ts(11), "Orchestrator Core", "Decomposed objective into task graph", "—", "5 tasks assigned"],
-      [ts(10), "Research & Data Agent", "Queried ERP, CRM, financial reports", AGENTS[0].model, "1,204 records reconciled"],
-      [ts(8), "Finance Agent", "Computed margin & variance analysis", AGENTS[1].model, "Northeast compression identified"],
-      [ts(6), "Operations Agent", "Mapped process cycle times", AGENTS[2].model, "Bottleneck isolated"],
-      [ts(5), "Risk & Compliance Agent", "Screened output against governance policy", AGENTS[3].model, "1 flag raised, escalated to human"],
-      [ts(3), "Human reviewer", "Approved redaction & inclusion policy", "—", "Approved"],
-      [ts(2), "Strategy Agent", "Synthesized prioritized recommendations", AGENTS[4].model, "3 recommendations ranked"],
-      [ts(1), "Executive Writer Agent", "Drafted executive action plan", AGENTS[5].model, "Deliverable compiled"]
-    ];
+    var audit = steps.map(function (s, idx) {
+      var d = new Date(now.getTime() - (steps.length - idx) * 45000);
+      var ts = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      var agent = AGENTS.find(function (a) { return a.id === s.agentId; });
+      return [ts, s.agentName || (agent ? agent.name : s.agentId), s.title, agent ? agent.model : "—", s.detail];
+    });
     document.getElementById("deliv-audit").innerHTML = audit.map(function (r) {
       return "<tr><td>" + r[0] + "</td><td class='a'>" + r[1] + "</td><td>" + r[2] + "</td><td>" + r[3] + "</td><td>" + r[4] + "</td></tr>";
     }).join("");
