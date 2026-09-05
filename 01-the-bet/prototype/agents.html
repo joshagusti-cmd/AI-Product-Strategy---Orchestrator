@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Registry — Aiven Orchestrator</title>
+<meta name="description" content="Every AI agent governed by the Aiven Orchestrator: tier, model, department, permissions, and approval requirements.">
+<link rel="stylesheet" href="assets/shared.css">
+<style>
+  .kpi-strip { grid-template-columns: repeat(4, 1fr); }
+  .cap-line { font-size: 11px; color: var(--text-mute); margin-top: 3px; max-width: 34ch; }
+  .cap-line.can::before { content: "✓ "; color: var(--success); }
+  .cap-line.cannot::before { content: "✕ "; color: var(--critical); }
+  .filters { margin: 18px 0; }
+  select.control.model-col { width: auto; min-width: 160px; }
+  @media (max-width: 980px) { .kpi-strip { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body data-page="agents">
+<script>document.documentElement.setAttribute("data-theme", "dark");</script>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="index.html">
+      <div class="brand-mark"></div>
+      <div class="brand-text"><span class="name">AIVEN ORCHESTRATOR</span><span class="sub">Agent governance console</span></div>
+    </a>
+    <div class="model-rail">
+      <div class="model-chip"><span class="dot"></span>Anthropic</div>
+      <div class="model-chip"><span class="dot"></span>OpenAI</div>
+      <div class="model-chip"><span class="dot"></span>Google</div>
+      <div class="status-live"><span class="dot"></span>LIVE</div>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle color theme">MODE</button>
+    </div>
+  </div>
+</div>
+<div class="subnav">
+  <div class="subnav-inner">
+    <a href="index.html" data-page="command">Command Center</a>
+    <a href="agents.html" data-page="agents">Agent Registry</a>
+    <a href="policies.html" data-page="policies">Policies</a>
+    <a href="approvals.html" data-page="approvals">Approval Queue</a>
+    <a href="audit.html" data-page="audit">Audit Trail</a>
+    <a href="spend.html" data-page="spend">Model Spend</a>
+    <a href="shadow-ai.html" data-page="shadow">Shadow AI Audit</a>
+  </div>
+</div>
+
+<div class="shell">
+  <div class="page-head">
+    <h1>&gt; Agent Registry</h1>
+    <p>Every agent the orchestrator governs, across every connected department — what it's allowed to do, what it can never do on its own, and who has to sign off before it acts. Reassigning a model here re-evaluates governance the same way it does from the Command Center.</p>
+  </div>
+
+  <section class="kpi-strip" aria-label="Registry metrics">
+    <div class="kpi"><div class="eyebrow">Total agents</div><div class="val tabular" id="kpi-total">—</div><div class="delta">governed</div></div>
+    <div class="kpi"><div class="eyebrow">Active</div><div class="val tabular" id="kpi-active">—</div><div class="delta up">running normally</div></div>
+    <div class="kpi"><div class="eyebrow">Under review</div><div class="val tabular" id="kpi-review">—</div><div class="delta warn" id="kpi-review-delta">check status</div></div>
+    <div class="kpi"><div class="eyebrow">Departments covered</div><div class="val tabular" id="kpi-depts">—</div><div class="delta">org-wide</div></div>
+  </section>
+
+  <div class="filters chip-row" id="tier-filter"></div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <div><h2>Registered agents</h2><div class="hint">Tier follows the Leader / Filler / Killer model-cascade from the pricing model, plus Core for general orchestration agents.</div></div>
+    </div>
+    <div class="panel-body tight scroll-x">
+      <table class="data" id="agent-table">
+        <thead><tr>
+          <th>Agent</th><th>Department</th><th>Tier</th><th>Model</th><th>Status</th><th>Approval needed</th><th>Last reviewed</th>
+        </tr></thead>
+        <tbody id="agent-rows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <span>Aiven Consulting Group — prototype build, simulated data · <button class="reset-link" id="reset-demo" type="button">Reset demo data</button></span>
+    <span id="clock" class="tabular"></span>
+  </footer>
+</div>
+
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<script src="assets/data.js"></script>
+<script>
+(function () {
+  "use strict";
+  Aiven.initChrome();
+  var state = Aiven.getState();
+  var MODELS = ["Claude Haiku 4.5", "Claude Sonnet 5", "Claude Opus 4.8", "GPT-4o", "Gemini 1.5 Pro"];
+  var TIERS = ["All", "Core", "Leader", "Filler", "Killer"];
+  var activeTier = "All";
+
+  function renderFilters() {
+    var wrap = document.getElementById("tier-filter");
+    wrap.innerHTML = "";
+    TIERS.forEach(function (t) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "chip" + (t === activeTier ? " on" : "");
+      b.textContent = t;
+      b.addEventListener("click", function () { activeTier = t; renderFilters(); renderTable(); });
+      wrap.appendChild(b);
+    });
+  }
+
+  function renderKpis() {
+    var agents = state.agents;
+    document.getElementById("kpi-total").textContent = agents.length;
+    document.getElementById("kpi-active").textContent = agents.filter(function (a) { return a.status === "Active"; }).length;
+    var review = agents.filter(function (a) { return a.status === "Review"; }).length;
+    document.getElementById("kpi-review").textContent = review;
+    document.getElementById("kpi-review-delta").textContent = review > 0 ? review + " needs owner sign-off" : "none pending";
+    var depts = {};
+    agents.forEach(function (a) { depts[a.dept] = true; });
+    document.getElementById("kpi-depts").textContent = Object.keys(depts).length;
+  }
+
+  function renderTable() {
+    var rows = state.agents.filter(function (a) { return activeTier === "All" || a.tier === activeTier; });
+    var body = document.getElementById("agent-rows");
+    if (!rows.length) {
+      body.innerHTML = "<tr><td colspan='7'><div class='empty-state'>No agents match this filter.</div></td></tr>";
+      return;
+    }
+    body.innerHTML = rows.map(function (a) {
+      return "<tr data-id='" + a.id + "'>" +
+        "<td class='name'>" + a.name + "<div class='cap-line can'>" + a.can + "</div><div class='cap-line cannot'>" + a.cannot + "</div></td>" +
+        "<td>" + a.dept + "</td>" +
+        "<td><span class='tier-pill " + a.tier + "'>" + a.tier + "</span></td>" +
+        "<td><select class='control model-col model-select' data-id='" + a.id + "'>" +
+        MODELS.map(function (m) { return "<option" + (m === a.model ? " selected" : "") + ">" + m + "</option>"; }).join("") +
+        "</select></td>" +
+        "<td><span class='status-pill " + a.status + "'><span class='dot'></span>" + a.status + "</span></td>" +
+        "<td>" + a.approval + "</td>" +
+        "<td class='mono'>" + a.reviewed + "</td>" +
+        "</tr>";
+    }).join("");
+
+    Array.prototype.forEach.call(body.querySelectorAll(".model-select"), function (sel) {
+      sel.addEventListener("change", function () {
+        var agent = state.agents.find(function (a) { return a.id === sel.dataset.id; });
+        var old = agent.model;
+        agent.model = sel.value;
+        Aiven.setState(function () {});
+        Aiven.addAudit({ actor: "Orchestrator Core", model: agent.model, risk: "—",
+          action: "Reassigned " + agent.name + " from " + old + " to " + agent.model,
+          detail: "Governance policy re-evaluated automatically after model swap." });
+        Aiven.toast(agent.name + " reassigned to " + agent.model + " — governance policy re-evaluated");
+      });
+    });
+  }
+
+  renderFilters();
+  renderKpis();
+  renderTable();
+})();
+</script>
+</body>
+</html>

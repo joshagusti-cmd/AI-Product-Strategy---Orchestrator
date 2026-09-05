@@ -1,164 +1,12 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Aiven Agent Orchestrator</title>
 <meta name="description" content="Command-center prototype for coordinating, governing, and auditing enterprise AI agents.">
+<link rel="stylesheet" href="assets/shared.css">
 <style>
-  :root {
-    --bg: #0a0e16;
-    --bg-grid: #0d1220;
-    --surface: #121a29;
-    --surface-raised: #17202f;
-    --surface-sunken: #0d131f;
-    --border: #24304a;
-    --border-soft: #1a2235;
-    --text: #edf1f8;
-    --text-dim: #b7c0d1;
-    --text-mute: #7d879c;
-    --accent: #e7a838;
-    --accent-dim: #b0842f;
-    --accent-soft: rgba(231, 168, 56, 0.12);
-    --accent-soft-2: rgba(231, 168, 56, 0.22);
-    --running: #52b3e6;
-    --running-soft: rgba(82, 179, 230, 0.14);
-    --success: #43c08c;
-    --success-soft: rgba(67, 192, 140, 0.14);
-    --critical: #e2586a;
-    --critical-soft: rgba(226, 88, 106, 0.14);
-    --paper: #e9e4d8;
-    --paper-ink: #201c14;
-    --paper-ink-dim: #57503f;
-    --paper-line: #d3ccb8;
-    --mono: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", ui-monospace, Menlo, "Liberation Mono", monospace;
-    --sans: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  }
-  :root[data-theme="light"] {
-    --bg: #eef1f6;
-    --bg-grid: #e6eaf1;
-    --surface: #ffffff;
-    --surface-raised: #ffffff;
-    --surface-sunken: #f3f5f9;
-    --border: #d7dce6;
-    --border-soft: #e3e7ee;
-    --text: #141a26;
-    --text-dim: #414c60;
-    --text-mute: #767f92;
-    --accent: #a9740e;
-    --accent-dim: #8a5e0a;
-    --accent-soft: rgba(169, 116, 14, 0.10);
-    --accent-soft-2: rgba(169, 116, 14, 0.18);
-    --running: #1178ab;
-    --running-soft: rgba(17, 120, 171, 0.10);
-    --success: #1f8f63;
-    --success-soft: rgba(31, 143, 99, 0.10);
-    --critical: #c22f43;
-    --critical-soft: rgba(194, 47, 67, 0.10);
-    --paper: #fffdf8;
-    --paper-ink: #201c14;
-    --paper-ink-dim: #57503f;
-    --paper-line: #e3ddca;
-  }
-  @media (prefers-color-scheme: light) {
-    :root:not([data-theme="dark"]) {
-      --bg: #eef1f6;
-      --bg-grid: #e6eaf1;
-      --surface: #ffffff;
-      --surface-raised: #ffffff;
-      --surface-sunken: #f3f5f9;
-      --border: #d7dce6;
-      --border-soft: #e3e7ee;
-      --text: #141a26;
-      --text-dim: #414c60;
-      --text-mute: #767f92;
-      --accent: #a9740e;
-      --accent-dim: #8a5e0a;
-      --accent-soft: rgba(169, 116, 14, 0.10);
-      --accent-soft-2: rgba(169, 116, 14, 0.18);
-      --running: #1178ab;
-      --running-soft: rgba(17, 120, 171, 0.10);
-      --success: #1f8f63;
-      --success-soft: rgba(31, 143, 99, 0.10);
-      --critical: #c22f43;
-      --critical-soft: rgba(194, 47, 67, 0.10);
-      --paper: #fffdf8;
-      --paper-ink: #201c14;
-      --paper-ink-dim: #57503f;
-      --paper-line: #e3ddca;
-    }
-  }
-
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  body {
-    background:
-      radial-gradient(ellipse 1200px 600px at 15% -10%, var(--accent-soft), transparent 60%),
-      var(--bg);
-    color: var(--text);
-    font-family: var(--sans);
-    font-size: 14px;
-    line-height: 1.5;
-    -webkit-font-smoothing: antialiased;
-  }
-  a { color: inherit; }
-  button { font-family: inherit; }
-  .tabular { font-variant-numeric: tabular-nums; }
-  ::selection { background: var(--accent-soft-2); }
-
-  .mono { font-family: var(--mono); }
-  .eyebrow {
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--text-mute);
-  }
-
-  /* ---------- shell ---------- */
-  .shell { max-width: 1360px; margin: 0 auto; padding: 0 28px 80px; }
-
-  /* ---------- topbar ---------- */
-  .topbar {
-    position: sticky; top: 0; z-index: 40;
-    background: color-mix(in srgb, var(--bg) 88%, transparent);
-    backdrop-filter: blur(10px);
-    border-bottom: 1px solid var(--border-soft);
-  }
-  .topbar-inner {
-    max-width: 1360px; margin: 0 auto; padding: 14px 28px;
-    display: flex; align-items: center; justify-content: space-between; gap: 24px;
-  }
-  .brand { display: flex; align-items: center; gap: 12px; }
-  .brand-mark {
-    width: 30px; height: 30px; border: 1px solid var(--accent-dim);
-    display: grid; place-items: center; position: relative; flex-shrink: 0;
-    background: var(--surface-raised);
-  }
-  .brand-mark::before {
-    content: ""; position: absolute; inset: 5px;
-    border: 1px solid var(--accent); border-radius: 50%;
-  }
-  .brand-mark::after {
-    content: ""; position: absolute; width: 4px; height: 4px; border-radius: 50%;
-    background: var(--accent); box-shadow: 0 0 6px var(--accent);
-  }
-  .brand-text { display: flex; flex-direction: column; gap: 1px; }
-  .brand-text .name { font-family: var(--mono); font-weight: 600; font-size: 14px; letter-spacing: 0.02em; }
-  .brand-text .sub { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.16em; color: var(--text-mute); text-transform: uppercase; }
-
-  .model-rail { display: flex; align-items: center; gap: 18px; }
-  .model-chip {
-    display: flex; align-items: center; gap: 7px;
-    font-family: var(--mono); font-size: 11px; color: var(--text-dim);
-    padding: 5px 10px; border: 1px solid var(--border-soft); background: var(--surface);
-  }
-  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); box-shadow: 0 0 5px var(--success); flex-shrink: 0; }
-  .theme-toggle {
-    border: 1px solid var(--border-soft); background: var(--surface); color: var(--text-dim);
-    padding: 6px 11px; font-family: var(--mono); font-size: 11px; cursor: pointer;
-  }
-  .theme-toggle:hover { border-color: var(--border); color: var(--text); }
-  .status-live { display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 11px; color: var(--success); }
-  .status-live .dot { animation: blink 2.2s ease-in-out infinite; }
-  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-
   /* ---------- hero / command console ---------- */
   .console {
     margin-top: 28px; border: 1px solid var(--border);
@@ -178,10 +26,6 @@
   }
   .console-head p { margin: 4px 0 0; color: var(--text-mute); font-size: 12.5px; max-width: 60ch; }
 
-  label.field-label {
-    display: block; font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em;
-    text-transform: uppercase; color: var(--text-mute); margin-bottom: 7px;
-  }
   .objective-row { display: flex; gap: 10px; margin-bottom: 20px; }
   .prompt-caret { font-family: var(--mono); color: var(--accent); padding-top: 10px; user-select: none; }
   textarea#objective {
@@ -192,15 +36,6 @@
   textarea#objective:focus { outline: none; border-color: var(--accent-dim); }
 
   .chip-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-bottom: 22px; }
-  .chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
-  .chip {
-    font-family: var(--mono); font-size: 11.5px; padding: 6px 11px;
-    border: 1px solid var(--border); background: var(--surface-sunken); color: var(--text-dim);
-    cursor: pointer; user-select: none; transition: border-color .12s, color .12s, background .12s;
-  }
-  .chip:hover { border-color: var(--text-mute); }
-  .chip.on { background: var(--accent-soft); border-color: var(--accent-dim); color: var(--accent); }
-  .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
   .console-foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
   .orchestrate-btn {
@@ -213,21 +48,9 @@
   .orchestrate-btn:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
   .console-hint { font-family: var(--mono); font-size: 10.5px; color: var(--text-mute); }
 
-  /* ---------- kpi strip ---------- */
-  .kpi-strip {
-    margin-top: 20px; display: grid; grid-template-columns: repeat(6, 1fr);
-    border: 1px solid var(--border); background: var(--surface);
-  }
-  .kpi {
-    padding: 16px 16px; border-right: 1px solid var(--border-soft); position: relative;
-  }
-  .kpi:last-child { border-right: none; }
-  .kpi .eyebrow { margin-bottom: 8px; }
+  /* ---------- kpi strip (this page: 6 tiles) ---------- */
+  .kpi-strip { grid-template-columns: repeat(6, 1fr); }
   .kpi .val { font-family: var(--mono); font-size: 23px; font-weight: 600; letter-spacing: -0.01em; }
-  .kpi .val small { font-size: 12px; color: var(--text-mute); font-weight: 500; margin-left: 2px; }
-  .kpi .delta { font-family: var(--mono); font-size: 10.5px; margin-top: 5px; color: var(--text-mute); }
-  .kpi .delta.up { color: var(--success); }
-  .kpi .delta.warn { color: var(--accent); }
   .kpi.pulse::after {
     content: ""; position: absolute; top: 12px; right: 12px; width: 6px; height: 6px;
     border-radius: 50%; background: var(--running); box-shadow: 0 0 6px var(--running);
@@ -237,15 +60,6 @@
   /* ---------- section shell ---------- */
   .grid-main { display: grid; grid-template-columns: 1.55fr 1fr; gap: 18px; margin-top: 18px; align-items: start; }
   .grid-two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 18px; align-items: start; }
-  .panel { border: 1px solid var(--border); background: var(--surface); }
-  .panel-head {
-    display: flex; align-items: center; justify-content: space-between; gap: 10px;
-    padding: 15px 18px; border-bottom: 1px solid var(--border-soft);
-  }
-  .panel-head h2 { font-family: var(--mono); font-size: 13px; font-weight: 600; margin: 0; letter-spacing: 0.01em; }
-  .panel-head .hint { font-size: 11.5px; color: var(--text-mute); margin-top: 2px; }
-  .panel-body { padding: 18px; }
-  .panel-body.tight { padding: 0; }
 
   /* ---------- agent network ---------- */
   #network-wrap { position: relative; height: 300px; }
@@ -300,20 +114,12 @@
   .step-detail { font-size: 12px; color: var(--text-dim); margin-top: 6px; max-width: 62ch; }
   .step-empty { padding: 30px 0; text-align: center; color: var(--text-mute); font-size: 12.5px; }
 
-  /* ---------- approvals ---------- */
+  /* ---------- approvals (live-run mini panel) ---------- */
   .approval-list { padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; }
   .approval-card { border: 1px solid var(--border); padding: 12px 13px; background: var(--surface-sunken); }
   .approval-card.new { border-color: var(--accent-dim); background: var(--accent-soft); animation: flashIn .6s ease; }
-  @keyframes flashIn { from { transform: translateY(-4px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
   .approval-top { display: flex; align-items: start; justify-content: space-between; gap: 8px; }
   .approval-title { font-size: 12.5px; font-weight: 600; max-width: 30ch; }
-  .risk-pill {
-    font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em;
-    padding: 2px 7px; border: 1px solid; white-space: nowrap; flex-shrink: 0;
-  }
-  .risk-pill.High { color: var(--critical); border-color: var(--critical); }
-  .risk-pill.Medium { color: var(--accent); border-color: var(--accent-dim); }
-  .risk-pill.Low { color: var(--text-mute); border-color: var(--border); }
   .approval-meta { font-family: var(--mono); font-size: 10.5px; color: var(--text-mute); margin: 5px 0 10px; }
   .approval-actions { display: flex; gap: 8px; }
   .approval-actions button {
@@ -358,7 +164,6 @@
   }
   .trend-up { color: var(--success); }
   .trend-down { color: var(--critical); }
-  .scroll-x { overflow-x: auto; }
 
   /* ---------- roi ---------- */
   .roi-body { padding: 18px; }
@@ -420,20 +225,6 @@
   table.audit td { padding: 8px 10px; border-bottom: 1px solid var(--paper-line); color: var(--paper-ink-dim); }
   table.audit td.a { color: var(--paper-ink); font-weight: 600; }
 
-  .toast-wrap { position: fixed; bottom: 20px; right: 20px; z-index: 100; display: flex; flex-direction: column; gap: 8px; }
-  .toast {
-    font-family: var(--mono); font-size: 11.5px; background: var(--surface-raised); border: 1px solid var(--border);
-    color: var(--text); padding: 10px 14px; box-shadow: 0 8px 24px rgba(0,0,0,0.35);
-    animation: flashIn .3s ease;
-  }
-  :root[data-theme="light"] .toast, .toast { box-shadow: 0 8px 24px rgba(0,0,0,0.25); }
-
-  footer.foot {
-    margin-top: 40px; padding-top: 18px; border-top: 1px solid var(--border-soft);
-    display: flex; justify-content: space-between; color: var(--text-mute); font-size: 11px; font-family: var(--mono);
-    flex-wrap: wrap; gap: 8px;
-  }
-
   @media (max-width: 980px) {
     .kpi-strip { grid-template-columns: repeat(3, 1fr); }
     .kpi:nth-child(3) { border-right: none; }
@@ -441,21 +232,20 @@
     .chip-groups { grid-template-columns: 1fr; }
     .roi-stats { grid-template-columns: 1fr; }
   }
-  @media (prefers-reduced-motion: reduce) {
-    * { animation: none !important; transition: none !important; }
-  }
 </style>
+</head>
+<body data-page="command">
 <script>document.documentElement.setAttribute("data-theme", "dark");</script>
 
 <div class="topbar">
   <div class="topbar-inner">
-    <div class="brand">
+    <a class="brand" href="index.html">
       <div class="brand-mark"></div>
       <div class="brand-text">
         <span class="name">AIVEN ORCHESTRATOR</span>
         <span class="sub">Agent governance console</span>
       </div>
-    </div>
+    </a>
     <div class="model-rail">
       <div class="model-chip"><span class="dot"></span>Anthropic</div>
       <div class="model-chip"><span class="dot"></span>OpenAI</div>
@@ -463,6 +253,17 @@
       <div class="status-live"><span class="dot"></span>LIVE</div>
       <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle color theme">MODE</button>
     </div>
+  </div>
+</div>
+<div class="subnav">
+  <div class="subnav-inner">
+    <a href="index.html" data-page="command">Command Center</a>
+    <a href="agents.html" data-page="agents">Agent Registry</a>
+    <a href="policies.html" data-page="policies">Policies</a>
+    <a href="approvals.html" data-page="approvals">Approval Queue</a>
+    <a href="audit.html" data-page="audit">Audit Trail</a>
+    <a href="spend.html" data-page="spend">Model Spend</a>
+    <a href="shadow-ai.html" data-page="shadow">Shadow AI Audit</a>
   </div>
 </div>
 
@@ -584,7 +385,7 @@
         <div class="panel-head">
           <div>
             <h2>Human approval queue</h2>
-            <div class="hint">Nothing ships without sign-off on flagged actions.</div>
+            <div class="hint">This run only — see <a href="approvals.html" style="color:var(--accent);">Approval Queue</a> for the org-wide backlog.</div>
           </div>
         </div>
         <div class="approval-list" id="approval-list"></div>
@@ -704,7 +505,7 @@
   </div>
 
   <footer class="foot">
-    <span>Aiven Consulting Group — prototype build, simulated data</span>
+    <span>Aiven Consulting Group — prototype build, simulated data · <button class="reset-link" id="reset-demo" type="button">Reset demo data</button></span>
     <span id="clock" class="tabular"></span>
   </footer>
 
@@ -712,42 +513,13 @@
 
 <div class="toast-wrap" id="toast-wrap"></div>
 
+<script src="assets/data.js"></script>
 <script>
 (function () {
   "use strict";
 
-  /* ---------------- theme ---------------- */
-  var root = document.documentElement;
-  document.getElementById("theme-toggle").addEventListener("click", function () {
-    var cur = root.getAttribute("data-theme");
-    var mql = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    var effectiveDark = cur ? cur === "dark" : mql;
-    root.setAttribute("data-theme", effectiveDark ? "light" : "dark");
-  });
-
-  /* ---------------- clock ---------------- */
-  function tickClock() {
-    var d = new Date();
-    document.getElementById("clock").textContent =
-      d.toLocaleDateString(undefined, { month: "short", day: "2-digit", year: "numeric" }) + " · " +
-      d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  }
-  tickClock();
-  setInterval(tickClock, 1000);
-
-  /* ---------------- toasts ---------------- */
-  function toast(msg) {
-    var wrap = document.getElementById("toast-wrap");
-    var el = document.createElement("div");
-    el.className = "toast";
-    el.textContent = msg;
-    wrap.appendChild(el);
-    setTimeout(function () {
-      el.style.opacity = "0";
-      el.style.transition = "opacity .3s";
-      setTimeout(function () { el.remove(); }, 300);
-    }, 3600);
-  }
+  Aiven.initChrome();
+  function toast(msg) { Aiven.toast(msg); }
 
   /* ---------------- data: chips ---------------- */
   var DEPTS = [
@@ -1013,7 +785,7 @@
   drawROI();
   window.addEventListener("resize", function () { drawROI(); });
 
-  /* ---------------- approvals ---------------- */
+  /* ---------------- approvals (this run only) ---------------- */
   var APPROVALS = [
     { id: "a1", title: "Publish Q3 Vendor Risk Review to Legal workspace", by: "Risk & Compliance Agent", risk: "Medium", age: "6h ago" },
     { id: "a2", title: "Grant Finance Agent read access to Q4 forecast model", by: "Orchestrator Core", risk: "Low", age: "1d ago" }
@@ -1046,6 +818,14 @@
     decisions[id] = decision;
     renderApprovals();
     toast("Approval " + decision + " — recorded to audit trail");
+    var a = APPROVALS.find(function (x) { return x.id === id; });
+    if (a) {
+      Aiven.addAudit({
+        actor: "Human reviewer", risk: a.risk, model: "—",
+        action: (decision === "approved" ? "Approved: " : "Rejected: ") + a.title,
+        detail: "Decided via the Command Center's live-run approval panel."
+      });
+    }
     if (id === "run-approval" && decision === "approved" && window.__resumeRun) {
       window.__resumeRun();
     }
@@ -1061,7 +841,6 @@
   function renderRisks() {
     var wrap = document.getElementById("risk-list");
     wrap.innerHTML = RISKS.map(function (r) {
-      var color = r.sev === "High" ? "var(--critical)" : "var(--accent)";
       return "<div class='risk-row'><span class='sev'><span class='risk-pill " + r.sev + "'>" + r.sev + "</span></span>" +
         "<div><p>" + r.text + "</p><div class='rmeta'>" + r.meta + "</div></div></div>";
     }).join("");
@@ -1178,6 +957,12 @@
       dw.classList.add("show");
       dw.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
       toast("Executive Action Plan ready — routed for review");
+
+      Aiven.addAudit({
+        actor: "Executive Writer Agent", model: AGENTS[5].model, risk: "—",
+        action: "Drafted the executive action plan for: “" + document.getElementById("objective").value + "”",
+        detail: "Deliverable compiled and staged for executive review. See Audit Trail for the full log."
+      });
     }
   });
 
@@ -1237,3 +1022,5 @@
 
 })();
 </script>
+</body>
+</html>

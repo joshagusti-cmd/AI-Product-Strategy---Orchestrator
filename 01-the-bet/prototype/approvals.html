@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Approval Queue — Aiven Orchestrator</title>
+<meta name="description" content="Org-wide queue of agent actions waiting on human sign-off before anything ships.">
+<link rel="stylesheet" href="assets/shared.css">
+<style>
+  .kpi-strip { grid-template-columns: repeat(4, 1fr); }
+  .filters { margin: 18px 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .row-actions { display: flex; gap: 8px; }
+  .decided-pill { font-family: var(--mono); font-size: 10.5px; }
+  .decided-pill.approved { color: var(--success); }
+  .decided-pill.rejected { color: var(--critical); }
+  @media (max-width: 980px) { .kpi-strip { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body data-page="approvals">
+<script>document.documentElement.setAttribute("data-theme", "dark");</script>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="index.html">
+      <div class="brand-mark"></div>
+      <div class="brand-text"><span class="name">AIVEN ORCHESTRATOR</span><span class="sub">Agent governance console</span></div>
+    </a>
+    <div class="model-rail">
+      <div class="model-chip"><span class="dot"></span>Anthropic</div>
+      <div class="model-chip"><span class="dot"></span>OpenAI</div>
+      <div class="model-chip"><span class="dot"></span>Google</div>
+      <div class="status-live"><span class="dot"></span>LIVE</div>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle color theme">MODE</button>
+    </div>
+  </div>
+</div>
+<div class="subnav">
+  <div class="subnav-inner">
+    <a href="index.html" data-page="command">Command Center</a>
+    <a href="agents.html" data-page="agents">Agent Registry</a>
+    <a href="policies.html" data-page="policies">Policies</a>
+    <a href="approvals.html" data-page="approvals">Approval Queue</a>
+    <a href="audit.html" data-page="audit">Audit Trail</a>
+    <a href="spend.html" data-page="spend">Model Spend</a>
+    <a href="shadow-ai.html" data-page="shadow">Shadow AI Audit</a>
+  </div>
+</div>
+
+<div class="shell">
+  <div class="page-head">
+    <h1>&gt; Approval Queue</h1>
+    <p>Every agent action that crosses an escalation threshold lands here, org-wide, until a human decides. Nothing ships without sign-off. The Command Center's approval panel shows only the single approval raised by the run currently in progress — this page is the full backlog.</p>
+  </div>
+
+  <section class="kpi-strip" aria-label="Approval metrics">
+    <div class="kpi"><div class="eyebrow">Pending</div><div class="val tabular" id="kpi-pending">—</div><div class="delta warn" id="kpi-pending-delta">awaiting review</div></div>
+    <div class="kpi"><div class="eyebrow">High risk pending</div><div class="val tabular" id="kpi-high">—</div><div class="delta warn">prioritize these</div></div>
+    <div class="kpi"><div class="eyebrow">Approved this session</div><div class="val tabular" id="kpi-approved">—</div><div class="delta up">recorded to audit trail</div></div>
+    <div class="kpi"><div class="eyebrow">Rejected this session</div><div class="val tabular" id="kpi-rejected">—</div><div class="delta">recorded to audit trail</div></div>
+  </section>
+
+  <div class="filters">
+    <div class="chip-row" id="risk-filter"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><div><h2>Queue</h2><div class="hint">Newest requests first, pending on top.</div></div></div>
+    <div class="panel-body tight scroll-x">
+      <table class="data" id="approval-table">
+        <thead><tr><th>Request</th><th>Raised by</th><th>Department</th><th>Risk</th><th>Requested</th><th>Decision</th></tr></thead>
+        <tbody id="approval-rows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <span>Aiven Consulting Group — prototype build, simulated data · <button class="reset-link" id="reset-demo" type="button">Reset demo data</button></span>
+    <span id="clock" class="tabular"></span>
+  </footer>
+</div>
+
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<script src="assets/data.js"></script>
+<script>
+(function () {
+  "use strict";
+  Aiven.initChrome();
+  var state = Aiven.getState();
+  var RISKS = ["All", "High", "Medium", "Low"];
+  var activeRisk = "All";
+
+  function renderFilters() {
+    var wrap = document.getElementById("risk-filter");
+    wrap.innerHTML = "";
+    RISKS.forEach(function (r) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "chip" + (r === activeRisk ? " on" : "");
+      b.textContent = r;
+      b.addEventListener("click", function () { activeRisk = r; renderFilters(); renderTable(); });
+      wrap.appendChild(b);
+    });
+  }
+
+  function renderKpis() {
+    var all = state.approvals;
+    document.getElementById("kpi-pending").textContent = all.filter(function (a) { return a.status === "pending"; }).length;
+    document.getElementById("kpi-high").textContent = all.filter(function (a) { return a.status === "pending" && a.risk === "High"; }).length;
+    document.getElementById("kpi-approved").textContent = all.filter(function (a) { return a.status === "approved"; }).length;
+    document.getElementById("kpi-rejected").textContent = all.filter(function (a) { return a.status === "rejected"; }).length;
+  }
+
+  function renderTable() {
+    var rows = state.approvals
+      .filter(function (a) { return activeRisk === "All" || a.risk === activeRisk; })
+      .slice()
+      .sort(function (a, b) { return (a.status === "pending" ? 0 : 1) - (b.status === "pending" ? 0 : 1); });
+    var body = document.getElementById("approval-rows");
+    if (!rows.length) {
+      body.innerHTML = "<tr><td colspan='6'><div class='empty-state'>Nothing in the queue at this risk level.</div></td></tr>";
+      return;
+    }
+    body.innerHTML = rows.map(function (a) {
+      var decision = a.status === "pending"
+        ? "<div class='row-actions'><button class='btn ghost approve small' data-id='" + a.id + "' data-decision='approved'>Approve</button>" +
+          "<button class='btn ghost reject small' data-id='" + a.id + "' data-decision='rejected'>Reject</button></div>"
+        : "<span class='decided-pill " + a.status + "'>" + (a.status === "approved" ? "✓ Approved" : "✕ Rejected") + "</span>";
+      return "<tr><td class='name'>" + a.title + "</td><td>" + a.agent + "</td><td>" + a.dept + "</td>" +
+        "<td><span class='risk-pill " + a.risk + "'>" + a.risk + "</span></td><td class='mono'>" + a.requestedAt + "</td>" +
+        "<td>" + decision + "</td></tr>";
+    }).join("");
+
+    Array.prototype.forEach.call(body.querySelectorAll("button[data-decision]"), function (btn) {
+      btn.addEventListener("click", function () {
+        var a = state.approvals.find(function (x) { return x.id === btn.dataset.id; });
+        a.status = btn.dataset.decision;
+        Aiven.setState(function () {});
+        Aiven.addAudit({ actor: "Human reviewer", model: "—", risk: a.risk,
+          action: (a.status === "approved" ? "Approved: " : "Rejected: ") + a.title,
+          detail: "Raised by " + a.agent + " · " + a.dept + " · decided via the Approval Queue." });
+        Aiven.toast("Request " + a.status + " — recorded to audit trail");
+        renderKpis();
+        renderTable();
+      });
+    });
+  }
+
+  renderFilters();
+  renderKpis();
+  renderTable();
+})();
+</script>
+</body>
+</html>

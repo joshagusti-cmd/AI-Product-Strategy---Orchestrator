@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Policy Editor — Aiven Orchestrator</title>
+<meta name="description" content="Define autonomy boundaries and escalation triggers per tier — the compliance owner's control surface for the orchestrator.">
+<link rel="stylesheet" href="assets/shared.css">
+<style>
+  .kpi-strip { grid-template-columns: repeat(3, 1fr); }
+  .policy-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 18px; align-items: start; }
+  .policy-card .panel-body { display: flex; flex-direction: column; gap: 14px; }
+  .threshold-row { display: flex; align-items: center; gap: 12px; }
+  .threshold-row input[type="range"] { flex: 1; }
+  .threshold-val { font-family: var(--mono); font-size: 13px; width: 42px; text-align: right; flex-shrink: 0; }
+  .policy-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .policy-foot .updated { font-family: var(--mono); font-size: 10.5px; color: var(--text-mute); }
+  @media (max-width: 980px) { .kpi-strip { grid-template-columns: repeat(1, 1fr); } .policy-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body data-page="policies">
+<script>document.documentElement.setAttribute("data-theme", "dark");</script>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="index.html">
+      <div class="brand-mark"></div>
+      <div class="brand-text"><span class="name">AIVEN ORCHESTRATOR</span><span class="sub">Agent governance console</span></div>
+    </a>
+    <div class="model-rail">
+      <div class="model-chip"><span class="dot"></span>Anthropic</div>
+      <div class="model-chip"><span class="dot"></span>OpenAI</div>
+      <div class="model-chip"><span class="dot"></span>Google</div>
+      <div class="status-live"><span class="dot"></span>LIVE</div>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle color theme">MODE</button>
+    </div>
+  </div>
+</div>
+<div class="subnav">
+  <div class="subnav-inner">
+    <a href="index.html" data-page="command">Command Center</a>
+    <a href="agents.html" data-page="agents">Agent Registry</a>
+    <a href="policies.html" data-page="policies">Policies</a>
+    <a href="approvals.html" data-page="approvals">Approval Queue</a>
+    <a href="audit.html" data-page="audit">Audit Trail</a>
+    <a href="spend.html" data-page="spend">Model Spend</a>
+    <a href="shadow-ai.html" data-page="shadow">Shadow AI Audit</a>
+  </div>
+</div>
+
+<div class="shell">
+  <div class="page-head">
+    <h1>&gt; Policy Editor</h1>
+    <p>The control surface a compliance owner uses to set approval thresholds per risk tier, instead of them being hardcoded in agent logic. Every save is written to the audit trail.</p>
+  </div>
+
+  <section class="kpi-strip" aria-label="Policy metrics">
+    <div class="kpi"><div class="eyebrow">Policies defined</div><div class="val tabular" id="kpi-count">—</div><div class="delta">per tier</div></div>
+    <div class="kpi"><div class="eyebrow">Two-gate tiers</div><div class="val tabular" id="kpi-twogate">—</div><div class="delta warn">never single-click autonomous</div></div>
+    <div class="kpi"><div class="eyebrow">Most recent change</div><div class="val" id="kpi-latest" style="font-size:15px;">—</div><div class="delta">of any policy</div></div>
+  </section>
+
+  <div class="policy-grid" id="policy-grid"></div>
+
+  <footer class="foot">
+    <span>Aiven Consulting Group — prototype build, simulated data · <button class="reset-link" id="reset-demo" type="button">Reset demo data</button></span>
+    <span id="clock" class="tabular"></span>
+  </footer>
+</div>
+
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<script src="assets/data.js"></script>
+<script>
+(function () {
+  "use strict";
+  Aiven.initChrome();
+  var state = Aiven.getState();
+  var AUTONOMY = ["Autonomous", "Advisory", "Approval-required", "Two-gate"];
+
+  function renderKpis() {
+    document.getElementById("kpi-count").textContent = state.policies.length;
+    document.getElementById("kpi-twogate").textContent = state.policies.filter(function (p) { return p.autonomy === "Two-gate"; }).length;
+    var latest = state.policies.slice().sort(function (a, b) { return b.updatedAt.localeCompare(a.updatedAt); })[0];
+    document.getElementById("kpi-latest").textContent = latest ? latest.label.split(" — ")[0] + " · " + latest.updatedAt : "—";
+  }
+
+  function renderGrid() {
+    var grid = document.getElementById("policy-grid");
+    grid.innerHTML = state.policies.map(function (p) {
+      return "<div class='panel policy-card' data-id='" + p.id + "'>" +
+        "<div class='panel-head'><div><h2>" + p.label + "</h2><div class='hint'>Tier: <span class='tier-pill " + p.tier + "' style='margin-left:4px;'>" + p.tier + "</span></div></div></div>" +
+        "<div class='panel-body'>" +
+        "<div class='field'><span class='field-label'>Autonomy level</span>" +
+        "<select class='control autonomy-select'>" +
+        AUTONOMY.map(function (a) { return "<option" + (a === p.autonomy ? " selected" : "") + ">" + a + "</option>"; }).join("") +
+        "</select></div>" +
+        "<div class='field'><span class='field-label'>Escalation risk threshold</span>" +
+        "<div class='threshold-row'><input type='range' class='control threshold-range' min='0' max='100' value='" + p.riskThreshold + "'>" +
+        "<span class='threshold-val tabular'>" + p.riskThreshold + "</span></div>" +
+        "<div class='field-hint'>A score at or above this crosses into escalation for this tier.</div></div>" +
+        "<div class='field'><span class='field-label'>Escalation rule</span>" +
+        "<textarea class='control escalation-text' rows='3'>" + p.escalation + "</textarea></div>" +
+        "<div class='policy-foot'><span class='updated mono'>Last updated " + p.updatedAt + "</span>" +
+        "<button class='btn primary save-policy' type='button'>Save policy</button></div>" +
+        "</div></div>";
+    }).join("");
+
+    Array.prototype.forEach.call(grid.querySelectorAll(".policy-card"), function (card) {
+      var id = card.dataset.id;
+      var range = card.querySelector(".threshold-range");
+      var val = card.querySelector(".threshold-val");
+      range.addEventListener("input", function () { val.textContent = range.value; });
+      card.querySelector(".save-policy").addEventListener("click", function () {
+        var p = state.policies.find(function (x) { return x.id === id; });
+        var newAutonomy = card.querySelector(".autonomy-select").value;
+        var newThreshold = Number(range.value);
+        var newEscalation = card.querySelector(".escalation-text").value.trim();
+        var changed = (newAutonomy !== p.autonomy) || (newThreshold !== p.riskThreshold) || (newEscalation !== p.escalation);
+        p.autonomy = newAutonomy;
+        p.riskThreshold = newThreshold;
+        p.escalation = newEscalation;
+        p.updatedAt = new Date().toISOString().slice(0, 10);
+        Aiven.setState(function () {});
+        Aiven.toast(changed ? p.label + " updated — logged to audit trail" : p.label + " saved (no changes)");
+        if (changed) {
+          Aiven.addAudit({ actor: "Compliance owner", model: "—", risk: "—",
+            action: "Updated policy: " + p.label,
+            detail: "Autonomy: " + p.autonomy + " · Escalation threshold: " + p.riskThreshold + "." });
+        }
+        renderKpis();
+        card.querySelector(".updated").textContent = "Last updated " + p.updatedAt;
+      });
+    });
+  }
+
+  renderKpis();
+  renderGrid();
+})();
+</script>
+</body>
+</html>

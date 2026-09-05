@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audit Trail — Aiven Orchestrator</title>
+<meta name="description" content="Real-time, exportable log of every agent and human action across the orchestrator, per the governance policy's audit cadence.">
+<link rel="stylesheet" href="assets/shared.css">
+<style>
+  .kpi-strip { grid-template-columns: repeat(3, 1fr); }
+  .filters { margin: 18px 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .search-box { max-width: 320px; }
+  .export-actions { display: flex; gap: 8px; }
+  td.detail-cell { max-width: 44ch; color: var(--text-mute); font-size: 11.5px; }
+  @media (max-width: 980px) { .kpi-strip { grid-template-columns: repeat(1, 1fr); } }
+</style>
+</head>
+<body data-page="audit">
+<script>document.documentElement.setAttribute("data-theme", "dark");</script>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="index.html">
+      <div class="brand-mark"></div>
+      <div class="brand-text"><span class="name">AIVEN ORCHESTRATOR</span><span class="sub">Agent governance console</span></div>
+    </a>
+    <div class="model-rail">
+      <div class="model-chip"><span class="dot"></span>Anthropic</div>
+      <div class="model-chip"><span class="dot"></span>OpenAI</div>
+      <div class="model-chip"><span class="dot"></span>Google</div>
+      <div class="status-live"><span class="dot"></span>LIVE</div>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle color theme">MODE</button>
+    </div>
+  </div>
+</div>
+<div class="subnav">
+  <div class="subnav-inner">
+    <a href="index.html" data-page="command">Command Center</a>
+    <a href="agents.html" data-page="agents">Agent Registry</a>
+    <a href="policies.html" data-page="policies">Policies</a>
+    <a href="approvals.html" data-page="approvals">Approval Queue</a>
+    <a href="audit.html" data-page="audit">Audit Trail</a>
+    <a href="spend.html" data-page="spend">Model Spend</a>
+    <a href="shadow-ai.html" data-page="shadow">Shadow AI Audit</a>
+  </div>
+</div>
+
+<div class="shell">
+  <div class="page-head">
+    <h1>&gt; Audit Trail</h1>
+    <p>Real-time logging of every action taken by an agent or a human reviewer, per the audit cadence in the governance policy. Actions you take elsewhere in this prototype — approving a request, saving a policy, orchestrating a run — land here immediately.</p>
+  </div>
+
+  <section class="kpi-strip" aria-label="Audit metrics">
+    <div class="kpi"><div class="eyebrow">Logged entries</div><div class="val tabular" id="kpi-total">—</div><div class="delta">this browser session</div></div>
+    <div class="kpi"><div class="eyebrow">High-risk entries</div><div class="val tabular" id="kpi-high">—</div><div class="delta warn">reviewed first</div></div>
+    <div class="kpi"><div class="eyebrow">Distinct actors</div><div class="val tabular" id="kpi-actors">—</div><div class="delta">agents + humans</div></div>
+  </section>
+
+  <div class="filters">
+    <input class="control search-box" id="search" type="search" placeholder="Search actor, action, or detail…">
+    <div class="export-actions">
+      <button class="btn small" id="export-json" type="button">Copy as JSON</button>
+      <button class="btn small" id="export-csv" type="button">Copy as CSV</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><div><h2>Log</h2><div class="hint">Newest first.</div></div></div>
+    <div class="panel-body tight scroll-x">
+      <table class="data" id="audit-table">
+        <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Model</th><th>Risk</th><th>Detail</th></tr></thead>
+        <tbody id="audit-rows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <span>Aiven Consulting Group — prototype build, simulated data · <button class="reset-link" id="reset-demo" type="button">Reset demo data</button></span>
+    <span id="clock" class="tabular"></span>
+  </footer>
+</div>
+
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<script src="assets/data.js"></script>
+<script>
+(function () {
+  "use strict";
+  Aiven.initChrome();
+  var state = Aiven.getState();
+  var query = "";
+
+  function renderKpis() {
+    var log = state.auditLog;
+    document.getElementById("kpi-total").textContent = log.length;
+    document.getElementById("kpi-high").textContent = log.filter(function (e) { return e.risk === "High"; }).length;
+    var actors = {};
+    log.forEach(function (e) { actors[e.actor] = true; });
+    document.getElementById("kpi-actors").textContent = Object.keys(actors).length;
+  }
+
+  function matches(e) {
+    if (!query) return true;
+    var q = query.toLowerCase();
+    return (e.actor + " " + e.action + " " + (e.detail || "")).toLowerCase().indexOf(q) !== -1;
+  }
+
+  function renderTable() {
+    var rows = state.auditLog.filter(matches);
+    var body = document.getElementById("audit-rows");
+    if (!rows.length) {
+      body.innerHTML = "<tr><td colspan='6'><div class='empty-state'>No entries match your search.</div></td></tr>";
+      return;
+    }
+    body.innerHTML = rows.map(function (e) {
+      var risk = e.risk && e.risk !== "—" ? "<span class='risk-pill " + e.risk + "'>" + e.risk + "</span>" : "<span class='muted'>—</span>";
+      return "<tr><td class='mono' title='" + new Date(e.ts).toLocaleString() + "'>" + Aiven.timeAgo(e.ts) + "</td>" +
+        "<td class='name'>" + e.actor + "</td><td>" + e.action + "</td><td class='mono'>" + (e.model || "—") + "</td>" +
+        "<td>" + risk + "</td><td class='detail-cell'>" + (e.detail || "") + "</td></tr>";
+    }).join("");
+  }
+
+  document.getElementById("search").addEventListener("input", function (e) {
+    query = e.target.value;
+    renderTable();
+  });
+
+  document.getElementById("export-json").addEventListener("click", function () {
+    var text = JSON.stringify(state.auditLog, null, 2);
+    navigator.clipboard.writeText(text).then(function () { Aiven.toast("Audit trail copied as JSON (" + state.auditLog.length + " entries)"); },
+      function () { Aiven.toast("Copy failed — clipboard permission denied"); });
+  });
+  document.getElementById("export-csv").addEventListener("click", function () {
+    var header = "time,actor,action,model,risk,detail";
+    var esc = function (v) { return '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"'; };
+    var lines = state.auditLog.map(function (e) {
+      return [e.ts, e.actor, e.action, e.model || "", e.risk || "", e.detail || ""].map(esc).join(",");
+    });
+    navigator.clipboard.writeText([header].concat(lines).join("\n")).then(function () { Aiven.toast("Audit trail copied as CSV (" + state.auditLog.length + " entries)"); },
+      function () { Aiven.toast("Copy failed — clipboard permission denied"); });
+  });
+
+  renderKpis();
+  renderTable();
+})();
+</script>
+</body>
+</html>
