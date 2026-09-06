@@ -1,16 +1,16 @@
 /* =========================================================================
-   Aiven Orchestrator — shared backend client + chrome behavior (Horizon 1)
+   Aiven Orchestrator — shared backend client + auth + chrome (Horizon 2)
 
-   Real, shared, persistent data via Supabase Postgres — replaces the old
-   localStorage simulation. Every visitor to these pages reads and writes
-   the same database. No auth yet (Horizon 2 per the roadmap): RLS is on,
-   but permissive, so the public anon key can read/write freely. That's a
-   real security tradeoff, documented in 01-the-bet/prototype.md — fine
-   for a design-partner demo, not for production multi-tenant use.
-
-   The Command Center's "Orchestrate" run calls a real Claude model
-   through a Supabase Edge Function (see supabase/functions/orchestrate)
-   instead of a scripted timeline.
+   Real, persistent Postgres via Supabase, now with real multi-tenancy:
+   - A public "Demo Workspace" is readable by anyone (anon key), but only
+     writable by its own signed-in members — i.e. read-only for anonymous
+     visitors. This is the shared demo everyone sees by default.
+   - Signing in (email magic link, no password) auto-provisions a private
+     workspace for that user (pre-seeded with the standard agent roster +
+     policies, clean activity history) and every read/write scopes to it
+     instead of the demo.
+   - Orchestrating (a real, metered Claude call) requires a signed-in
+     session — the Edge Function itself rejects anonymous requests.
    ========================================================================= */
 (function (global) {
   "use strict";
@@ -18,11 +18,56 @@
   var SUPABASE_URL = "https://uqgdruekuwitjwyotdud.supabase.co";
   var SUPABASE_ANON_KEY = "sb_publishable_p18dpRJSewtzNn0mLS4GCw_4A3p1qLJ";
   var ORCHESTRATE_FUNCTION_URL = SUPABASE_URL + "/functions/v1/orchestrate";
+  var DEMO_WORKSPACE_ID = "00000000-0000-0000-0000-000000000001";
 
   if (!global.supabase || !global.supabase.createClient) {
     console.error("Aiven: supabase-js failed to load — check the CDN <script> tag on this page.");
   }
   var sb = global.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  /* ---------------- auth / workspace state ---------------- */
+  var currentUser = null;
+  var currentWorkspaceId = DEMO_WORKSPACE_ID;
+  var authListeners = [];
+  var resolveReady;
+  var ready = new Promise(function (res) { resolveReady = res; });
+
+  async function resolveWorkspaceId(userId) {
+    for (var attempt = 0; attempt < 3; attempt++) {
+      var r = await sb.from("workspace_members").select("workspace_id").eq("user_id", userId).limit(1).maybeSingle();
+      if (r.error) throw r.error;
+      if (r.data) return r.data.workspace_id;
+      await new Promise(function (res) { setTimeout(res, 600); }); // auto-provision trigger racing us — retry briefly
+    }
+    return null;
+  }
+
+  async function handleAuthChange(session) {
+    var user = session && session.user ? session.user : null;
+    currentUser = user;
+    if (user) {
+      try {
+        var wsId = await resolveWorkspaceId(user.id);
+        currentWorkspaceId = wsId || DEMO_WORKSPACE_ID;
+      } catch (e) {
+        console.error("Aiven: failed to resolve workspace for signed-in user", e);
+        currentWorkspaceId = DEMO_WORKSPACE_ID;
+      }
+    } else {
+      currentWorkspaceId = DEMO_WORKSPACE_ID;
+    }
+    authListeners.forEach(function (fn) { try { fn(currentUser, currentWorkspaceId); } catch (e) { console.error(e); } });
+  }
+
+  sb.auth.onAuthStateChange(function (_event, session) {
+    handleAuthChange(session).then(resolveReady, resolveReady);
+  });
+
+  function requireOwnWorkspace() {
+    if (currentWorkspaceId === DEMO_WORKSPACE_ID) {
+      throw new Error("Sign in to make changes — you're viewing the read-only public demo.");
+    }
+  }
 
   /* ---------------- mapping: DB rows -> the shape the pages expect ---------------- */
   function mapPolicy(row) {
@@ -51,12 +96,14 @@
 
   /* ---------------- reads ---------------- */
   async function loadState() {
+    await ready;
+    var ws = currentWorkspaceId;
     var results = await Promise.all([
-      sb.from("agents").select("*").order("name"),
-      sb.from("policies").select("*").order("id"),
-      sb.from("approvals").select("*").order("requested_at", { ascending: false }),
-      sb.from("shadow_tools").select("*").order("found_at"),
-      sb.from("audit_log").select("*").order("ts", { ascending: false }).limit(300)
+      sb.from("agents").select("*").eq("workspace_id", ws).order("name"),
+      sb.from("policies").select("*").eq("workspace_id", ws).order("id"),
+      sb.from("approvals").select("*").eq("workspace_id", ws).order("requested_at", { ascending: false }),
+      sb.from("shadow_tools").select("*").eq("workspace_id", ws).order("found_at"),
+      sb.from("audit_log").select("*").eq("workspace_id", ws).order("ts", { ascending: false }).limit(300)
     ]);
     throwIfError(results);
     var agents = results[0].data, policies = results[1].data, approvals = results[2].data,
@@ -70,59 +117,73 @@
     };
   }
 
-  /* ---------------- writes ---------------- */
+  /* ---------------- writes (all scoped to the caller's own workspace) ---------------- */
   async function updateAgentModel(id, model) {
-    var r = await sb.from("agents").update({ model: model, updated_at: new Date().toISOString() }).eq("id", id);
+    requireOwnWorkspace();
+    var r = await sb.from("agents").update({ model: model, updated_at: new Date().toISOString() })
+      .eq("workspace_id", currentWorkspaceId).eq("id", id);
     if (r.error) throw r.error;
   }
 
   async function savePolicy(id, patch) {
+    requireOwnWorkspace();
     var r = await sb.from("policies").update({
       autonomy: patch.autonomy, risk_threshold: patch.riskThreshold, escalation: patch.escalation,
       updated_at: new Date().toISOString()
-    }).eq("id", id);
+    }).eq("workspace_id", currentWorkspaceId).eq("id", id);
     if (r.error) throw r.error;
   }
 
   async function decideApproval(id, decision) {
-    var r = await sb.from("approvals").update({ status: decision, decided_at: new Date().toISOString() }).eq("id", id);
+    requireOwnWorkspace();
+    var r = await sb.from("approvals").update({ status: decision, decided_at: new Date().toISOString() })
+      .eq("workspace_id", currentWorkspaceId).eq("id", id);
     if (r.error) throw r.error;
   }
 
   async function decideShadowTool(id, decision) {
-    var r = await sb.from("shadow_tools").update({ decision: decision }).eq("id", id);
+    requireOwnWorkspace();
+    var r = await sb.from("shadow_tools").update({ decision: decision })
+      .eq("workspace_id", currentWorkspaceId).eq("id", id);
     if (r.error) throw r.error;
   }
 
   async function addShadowTool(tool) {
+    requireOwnWorkspace();
     var r = await sb.from("shadow_tools").insert({
-      id: tool.id, name: tool.name, owner: tool.owner, risk: tool.risk,
+      workspace_id: currentWorkspaceId, id: tool.id, name: tool.name, owner: tool.owner, risk: tool.risk,
       decision: "undecided", note: tool.note
     });
     if (r.error) throw r.error;
   }
 
   async function addAudit(entry) {
+    requireOwnWorkspace();
     var r = await sb.from("audit_log").insert({
-      actor: entry.actor, action: entry.action, model: entry.model || null,
+      workspace_id: currentWorkspaceId, actor: entry.actor, action: entry.action, model: entry.model || null,
       risk: entry.risk && entry.risk !== "—" ? entry.risk : null, detail: entry.detail || null
     });
     if (r.error) throw r.error;
   }
 
   async function resetState() {
+    // Always resets the shared public demo workspace, regardless of who's
+    // signed in — a signed-in user's own workspace is untouched by this.
     var r = await sb.rpc("reseed_demo_data");
     if (r.error) throw r.error;
   }
 
-  /* ---------------- real model call ---------------- */
+  /* ---------------- real model call (requires sign-in) ---------------- */
   async function orchestrate(objective, departments, sources) {
+    await ready;
+    var session = (await sb.auth.getSession()).data.session;
+    var token = session ? session.access_token : SUPABASE_ANON_KEY;
     var resp = await fetch(ORCHESTRATE_FUNCTION_URL, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         "apikey": SUPABASE_ANON_KEY,
-        "authorization": "Bearer " + SUPABASE_ANON_KEY
+        "authorization": "Bearer " + token
       },
       body: JSON.stringify({ objective: objective, departments: departments, sources: sources })
     });
@@ -131,6 +192,69 @@
       throw new Error(body.error || ("Orchestration request failed (" + resp.status + ")"));
     }
     return body; // { result, model, usage }
+  }
+
+  /* ---------------- auth actions ---------------- */
+  function currentRedirectUrl() {
+    return global.location.origin + global.location.pathname;
+  }
+  async function signInWithEmail(email) {
+    var r = await sb.auth.signInWithOtp({ email: email, options: { emailRedirectTo: currentRedirectUrl() } });
+    if (r.error) throw r.error;
+  }
+  async function signOut() {
+    var r = await sb.auth.signOut();
+    if (r.error) throw r.error;
+  }
+  function getUser() { return currentUser; }
+  function isDemo() { return currentWorkspaceId === DEMO_WORKSPACE_ID; }
+  function onAuthChange(fn) {
+    authListeners.push(fn);
+    ready.then(function () { fn(currentUser, currentWorkspaceId); });
+  }
+
+  /* ---------------- auth widget (shared markup injected into every page) ---------------- */
+  function renderAuthWidget(container) {
+    if (!container) return;
+    if (currentUser) {
+      container.innerHTML =
+        "<span class='auth-email' title='Signed in'>" + currentUser.email + "</span>" +
+        "<button class='btn small' id='auth-signout-btn' type='button'>Sign out</button>";
+      var out = container.querySelector("#auth-signout-btn");
+      out.addEventListener("click", async function () {
+        out.disabled = true;
+        try { await signOut(); toast("Signed out — back to the read-only demo."); global.location.reload(); }
+        catch (e) { toast("Sign out failed: " + e.message); out.disabled = false; }
+      });
+    } else {
+      container.innerHTML =
+        "<span class='auth-badge'>Demo (read-only)</span>" +
+        "<input class='control auth-email-input' id='auth-email-input' type='email' placeholder='you@company.com' autocomplete='email'>" +
+        "<button class='btn small' id='auth-signin-btn' type='button'>Sign in</button>";
+      var btn = container.querySelector("#auth-signin-btn");
+      var input = container.querySelector("#auth-email-input");
+      var submit = async function () {
+        var email = input.value.trim();
+        if (!email) { toast("Enter an email address first."); return; }
+        btn.disabled = true;
+        try {
+          await signInWithEmail(email);
+          toast("Magic link sent to " + email + " — check your inbox.");
+          input.value = "";
+        } catch (e) {
+          toast("Sign-in failed: " + e.message);
+        } finally {
+          btn.disabled = false;
+        }
+      };
+      btn.addEventListener("click", submit);
+      input.addEventListener("keydown", function (e) { if (e.key === "Enter") submit(); });
+    }
+  }
+  function mountAuthWidget(containerOrId) {
+    var container = typeof containerOrId === "string" ? document.getElementById(containerOrId) : containerOrId;
+    if (!container) return;
+    onAuthChange(function () { renderAuthWidget(container); });
   }
 
   /* ---------------- time formatting ---------------- */
@@ -164,7 +288,7 @@
     }, 3600);
   }
 
-  /* ---------------- shared chrome: theme, clock, nav highlight, reset ---------------- */
+  /* ---------------- shared chrome: theme, clock, nav highlight, reset, auth widget ---------------- */
   function initChrome() {
     var root = document.documentElement;
     var themeBtn = document.getElementById("theme-toggle");
@@ -198,7 +322,7 @@
     var resetBtn = document.getElementById("reset-demo");
     if (resetBtn) {
       resetBtn.addEventListener("click", async function () {
-        if (!global.confirm("Reset the shared database back to its seeded state? This clears every approval, policy edit, and audit entry anyone has added.")) return;
+        if (!global.confirm("Reset the shared PUBLIC DEMO workspace back to its seeded state? (Your own workspace, if you're signed in, is untouched.) This clears every approval, policy edit, and audit entry anyone has added to the demo.")) return;
         resetBtn.disabled = true;
         try {
           await resetState();
@@ -209,9 +333,12 @@
         }
       });
     }
+
+    mountAuthWidget("auth-widget");
   }
 
   global.Aiven = {
+    ready: ready,
     loadState: loadState,
     updateAgentModel: updateAgentModel,
     savePolicy: savePolicy,
@@ -224,6 +351,13 @@
     timeAgo: timeAgo,
     timeClock: timeClock,
     toast: toast,
-    initChrome: initChrome
+    initChrome: initChrome,
+    auth: {
+      signInWithEmail: signInWithEmail,
+      signOut: signOut,
+      getUser: getUser,
+      isDemo: isDemo,
+      onChange: onAuthChange
+    }
   };
 })(window);

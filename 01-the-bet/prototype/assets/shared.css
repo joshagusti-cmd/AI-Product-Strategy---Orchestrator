@@ -119,6 +119,22 @@ button, select, input, textarea { font-family: inherit; }
 .status-live .dot { animation: blink 2.2s ease-in-out infinite; }
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
+/* ---------- auth widget ---------- */
+.auth-widget { display: flex; align-items: center; gap: 7px; }
+.auth-badge {
+  font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--text-mute); border: 1px solid var(--border-soft); padding: 5px 8px; white-space: nowrap;
+}
+.auth-email {
+  font-family: var(--mono); font-size: 11px; color: var(--text-dim); max-width: 160px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+input.auth-email-input { width: 150px; padding: 6px 9px; font-size: 11px; }
+@media (max-width: 980px) {
+  .auth-widget { flex-wrap: wrap; }
+  input.auth-email-input { width: 120px; }
+}
+
 .subnav { border-bottom: 1px solid var(--border-soft); background: var(--bg-grid); }
 .subnav-inner {
   max-width: 1360px; margin: 0 auto; padding: 0 28px; display: flex; gap: 2px; overflow-x: auto;

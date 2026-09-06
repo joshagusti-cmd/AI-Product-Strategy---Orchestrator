@@ -17,7 +17,7 @@ Input to the Horizon mapping in `roadmap.md`. Constructed from `feature-ideas.md
 | Formal EU AI Act / GDPR legal review | Task | P0 | Backlog | The Guardrails | compliance, legal |
 | Model break-even economics (CAC + fixed opex) | Task | P0 | Backlog | The Margin | finance |
 | Run a real red-team session with a partner | Task | P0 | Backlog | The Contract | reliability, research |
-| Real auth + multi-tenancy (SSO/RBAC) | Epic | P1 | Backlog | The Guardrails | platform, security |
+| Real auth + multi-tenancy (SSO/RBAC) | Epic | P1 | Done (prototype) — magic-link auth + per-user isolated workspace shipped; SSO, teams/invites, RBAC still open | The Guardrails | platform, security |
 | Cost-based automatic model routing | Epic | P1 | Backlog | The Margin | cost, routing |
 | Integrations catalog (NetSuite/Salesforce/Zendesk/Snowflake/Workday) | Epic | P1 | Backlog | The Bet | integration |
 | Org-wide model spend dashboard | Story | P2 | Backlog | The Margin | analytics, cost |

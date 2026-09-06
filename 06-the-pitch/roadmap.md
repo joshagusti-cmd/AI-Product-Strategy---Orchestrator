@@ -24,7 +24,7 @@
 | Build the Cross-Domain Transfer loop — extend Leader-tier scam-likelihood signal into anti-money-laundering scoring | Loop status flips missing → active; a second production use case running off the same signal | M |
 | Formal legal review of the EU AI Act / GDPR risk-tier read, and model real break-even economics (CAC + fixed opex) | Signed-off classification replacing the current draft caveat; a real break-even figure replacing "not yet modeled" | H |
 | Run a real red-team session with a partner | At least one new failure mode found and folded into the golden dataset, replacing the current draft finding | H |
-| Ship real auth/multi-tenancy (SSO/RBAC), cost-based model routing, and the core integrations catalog (NetSuite, Salesforce, Zendesk, Snowflake, Workday) | First design partner fully self-serve, no manual data wiring | M |
+| ~~Ship real auth/multi-tenancy~~ — **built at prototype fidelity**: email magic-link sign-in, an isolated private workspace auto-provisioned per user, and a read-only public demo (`01-the-bet/prototype/supabase/README.md`). Still open, and still gating "first design partner fully self-serve": SSO, teams/invites, RBAC within a workspace, spend caps, plus cost-based model routing and the core integrations catalog (NetSuite, Salesforce, Zendesk, Snowflake, Workday) | First design partner fully self-serve, no manual data wiring | M |
 | Slack/Teams-native approval actions | Analyst approval turnaround time drops measurably vs. in-app-only queue | L |
 
 ### Horizon 3 — Bet (9-18 months)
