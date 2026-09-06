@@ -123,7 +123,7 @@ Given the objective, the departments in scope, and the data sources in scope, si
       },
       body: JSON.stringify({
         model: "claude-sonnet-5",
-        max_tokens: 4096,
+        max_tokens: 8192,
         system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }],
         tools: [ORCHESTRATE_TOOL],
@@ -136,13 +136,27 @@ Given the objective, the departments in scope, and the data sources in scope, si
 
   if (!anthropicResp.ok) {
     const text = await anthropicResp.text();
+    console.error("Anthropic API error", anthropicResp.status, text);
     return json({ error: `Anthropic API error (${anthropicResp.status}): ${text}` }, 502);
   }
 
   const data = await anthropicResp.json();
+  console.log("orchestrate: stop_reason=", data.stop_reason, "usage=", JSON.stringify(data.usage));
+
+  if (data.stop_reason === "max_tokens") {
+    return json({ error: "The model's response was cut off by the token limit before it finished. Try a shorter or more specific objective, or fewer departments/data sources." }, 502);
+  }
+
   const toolUse = (data.content || []).find((b: { type: string }) => b.type === "tool_use");
   if (!toolUse) {
-    return json({ error: "Model did not return a structured result." }, 502);
+    console.error("orchestrate: no tool_use block in response", JSON.stringify(data.content));
+    return json({ error: "Model did not return a structured result (no tool_use block)." }, 502);
+  }
+
+  const steps = toolUse.input && toolUse.input.steps;
+  if (!Array.isArray(steps) || steps.length === 0) {
+    console.error("orchestrate: tool_use.input had no steps", JSON.stringify(toolUse.input));
+    return json({ error: "Model returned a result with no agent steps. This usually means the response was too constrained — try again." }, 502);
   }
 
   return json({ result: toolUse.input, model: data.model, usage: data.usage });
