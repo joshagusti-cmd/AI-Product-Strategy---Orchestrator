@@ -194,6 +194,24 @@
     return body; // { result, model, usage }
   }
 
+  // Reads the caller's own workspace's rolling-24h Orchestrate usage
+  // against its cap, straight from the DB (RLS lets a member read their
+  // own workspace row and usage log) — no Edge Function round trip.
+  // Returns null for the read-only demo workspace, where Orchestrate
+  // isn't available at all.
+  async function getUsage() {
+    await ready;
+    if (currentWorkspaceId === DEMO_WORKSPACE_ID) return null;
+    var wsRes = await sb.from("workspaces").select("daily_orchestrate_limit").eq("id", currentWorkspaceId).maybeSingle();
+    if (wsRes.error) throw wsRes.error;
+    var limit = (wsRes.data && wsRes.data.daily_orchestrate_limit) || 20;
+    var since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    var countRes = await sb.from("orchestrate_usage").select("id", { count: "exact", head: true })
+      .eq("workspace_id", currentWorkspaceId).gte("called_at", since);
+    if (countRes.error) throw countRes.error;
+    return { used: countRes.count || 0, limit: limit };
+  }
+
   /* ---------------- auth actions ---------------- */
   function currentRedirectUrl() {
     return global.location.origin + global.location.pathname;
@@ -348,6 +366,7 @@
     addAudit: addAudit,
     resetState: resetState,
     orchestrate: orchestrate,
+    getUsage: getUsage,
     timeAgo: timeAgo,
     timeClock: timeClock,
     toast: toast,

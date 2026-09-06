@@ -30,6 +30,7 @@ The lead items across Horizon 1 and the start of Horizon 2 in `06-the-pitch/road
 - **Persistent backend** — a real Supabase Postgres database (`supabase/migrations/`) with five tables (agents, policies, approvals, shadow tools, audit log), replacing the localStorage simulation.
 - **Real model calls** — the Command Center's orchestration run calls a real Claude model through a Supabase Edge Function (`supabase/functions/orchestrate/`), which returns a genuinely model-generated executive summary, findings, recommendations, risk flags, and per-agent steps — not scripted copy. Read the function's comment for the honest framing: it's **one** real API call producing structured per-agent output, not six independent agent calls.
 - **Real multi-tenant auth** — email magic-link sign-in (no passwords), with a public read-only demo workspace and a private, isolated, auto-provisioned workspace per signed-in user. Orchestrating (a real, metered API call) requires signing in — the Edge Function itself rejects anonymous requests, so a random visitor can't run up the API bill.
+- **Real spend cap** — every workspace has a rolling-24h Orchestrate limit (default 20 calls), enforced server-side in the Edge Function itself via the service role key, not just something the client checks. The Command Center shows a live "X/Y runs used today" count once signed in.
 
 Full detail — schema, the auth/multi-tenancy model, what's still simplified about it, and the two manual steps (the `ANTHROPIC_API_KEY` secret + the auth redirect URL allowlist) — is in `supabase/README.md`.
 
@@ -39,7 +40,7 @@ Being direct about the remaining gap to "fully functional SaaS," per the Horizon
 - **No real integrations** — NetSuite/Salesforce/Zendesk/Snowflake/Workday are chips in the UI, not live connections.
 - **Cost and reliability figures are modeled**, not measured — they're transcribed from `03-the-margin/cost-curve.md` and `04-the-contract/golden-dataset.md`, not live telemetry.
 - **The orchestration run is one real call, not six** — see above. A true multi-agent architecture (independent calls per agent, able to use different models per tier as the UI implies) is a natural next step, not yet built.
-- **No per-workspace spend caps or rate limiting** on real Claude calls — any signed-in user can orchestrate as often as they like.
+- **Spend cap is a single hardcoded default, not plan/billing-tied** — every workspace gets the same 20-calls-per-24h limit; there's no admin UI to change one workspace's limit (would need a direct SQL update today), and no notion of a paid tier with a higher cap.
 
 Closing these is the rest of Horizon 2: teams/RBAC, the integrations catalog, and usage-based spend controls.
 
