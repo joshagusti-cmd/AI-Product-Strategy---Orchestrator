@@ -11,7 +11,7 @@ A clickable, multi-page governance platform prototype for the Aiven Agent Orches
 - **Model Spend Dashboard** (`spend.html`) — cost by tier and by model provider, tied to the cascading Leader/Filler/Killer pricing model in `03-the-margin/cost-curve.md`; the provider breakdown is live off the Agent Registry's current model assignments.
 - **Shadow AI Audit** (`shadow-ai.html`) — the illustrative shadow-tool findings from `05-the-guardrails/compounding-system.md`, plus a "Run Shadow AI Scan" action that simulates discovering new unmanaged tool use and routes it to a govern/kill decision.
 
-All six governance pages read and write a **real, shared Postgres database on Supabase** (`assets/data.js` talks to it directly via `supabase-js`, no build step) — approving something, saving a policy, or deciding a Shadow AI finding on one page shows up immediately on another, and now for every visitor, not just one browser. The Command Center's "Orchestrate" button calls a real Claude model through a Supabase Edge Function instead of a scripted timeline — see "Horizon 1: real backend + real model calls" below for what that means and what's still a tradeoff.
+All six governance pages read and write a **real Postgres database on Supabase** (`assets/data.js` talks to it directly via `supabase-js`, no build step), with **real multi-tenant auth**: anonymous visitors get a read-only view of a shared public demo, and signing in (email magic link, no password) auto-provisions your own private, isolated workspace — approving something, saving a policy, or deciding a Shadow AI finding shows up immediately across pages, scoped to whichever workspace you're in. The Command Center's "Orchestrate" button calls a real Claude model through a Supabase Edge Function instead of a scripted timeline, gated to signed-in users since it's a real, metered API call — see "Horizon 1 → 2: real backend, real model calls, real auth" below.
 
 ## Tool Used
 Claude Code (Claude Sonnet 5) — hand-built HTML/CSS/JS, no framework, plus a Supabase Postgres database and Deno Edge Function for the backend (see `supabase/README.md`). Runs standalone in any browser, and deploys to GitHub Pages via `.github/workflows/deploy-pages.yml` (see the repo README for the live URL once Pages is enabled).
@@ -24,22 +24,24 @@ An earlier single-page version of the Command Center was also published as a Cla
 ## AI Value Archetype
 Orchestrator — consistent with the Module 1 diagnostic. It doesn't compete with Claude or GPT on raw model capability; it coordinates and governs them.
 
-## Horizon 1: real backend + real model calls
-The two lead items in Horizon 1 of `06-the-pitch/roadmap.md` are now built, at design-partner-demo fidelity:
+## Horizon 1 → 2: real backend, real model calls, real auth
+The lead items across Horizon 1 and the start of Horizon 2 in `06-the-pitch/roadmap.md` are now built, at design-partner-demo fidelity:
 
-- **Persistent, shared backend** — a real Supabase Postgres database (`supabase/migrations/`) with five tables (agents, policies, approvals, shadow tools, audit log), replacing the localStorage simulation. State now survives reloads and is shared across every visitor, not just cached per-browser.
+- **Persistent backend** — a real Supabase Postgres database (`supabase/migrations/`) with five tables (agents, policies, approvals, shadow tools, audit log), replacing the localStorage simulation.
 - **Real model calls** — the Command Center's orchestration run calls a real Claude model through a Supabase Edge Function (`supabase/functions/orchestrate/`), which returns a genuinely model-generated executive summary, findings, recommendations, risk flags, and per-agent steps — not scripted copy. Read the function's comment for the honest framing: it's **one** real API call producing structured per-agent output, not six independent agent calls.
+- **Real multi-tenant auth** — email magic-link sign-in (no passwords), with a public read-only demo workspace and a private, isolated, auto-provisioned workspace per signed-in user. Orchestrating (a real, metered API call) requires signing in — the Edge Function itself rejects anonymous requests, so a random visitor can't run up the API bill.
 
-Full detail — schema, the security tradeoff of running without auth, and the one manual step (setting the `ANTHROPIC_API_KEY` secret) — is in `supabase/README.md`.
+Full detail — schema, the auth/multi-tenancy model, what's still simplified about it, and the two manual steps (the `ANTHROPIC_API_KEY` secret + the auth redirect URL allowlist) — is in `supabase/README.md`.
 
 ## What's still simulated
 Being direct about the remaining gap to "fully functional SaaS," per the Horizon 1/2 roadmap:
-- **No real auth or multi-tenancy** — every table is readable/writable by the public anon key (Horizon 2). Fine for a shared demo; not for real customer data.
+- **Auth is one-workspace-per-user, no teams/invites/RBAC yet** — a real design partner would want to add teammates to one shared workspace with different roles (analyst vs. compliance owner vs. admin); that's not built, only the single-owner-per-workspace case is. See `supabase/README.md` for the exact gaps.
 - **No real integrations** — NetSuite/Salesforce/Zendesk/Snowflake/Workday are chips in the UI, not live connections.
 - **Cost and reliability figures are modeled**, not measured — they're transcribed from `03-the-margin/cost-curve.md` and `04-the-contract/golden-dataset.md`, not live telemetry.
 - **The orchestration run is one real call, not six** — see above. A true multi-agent architecture (independent calls per agent, able to use different models per tier as the UI implies) is a natural next step, not yet built.
+- **No per-workspace spend caps or rate limiting** on real Claude calls — any signed-in user can orchestrate as often as they like.
 
-Closing these is the rest of Horizon 1/2: auth/multi-tenancy and the integrations catalog.
+Closing these is the rest of Horizon 2: teams/RBAC, the integrations catalog, and usage-based spend controls.
 
 ## The Bet in One Sentence
 <!-- DRAFT below — this is your call, not mine. Edit or replace before treating it as final. -->

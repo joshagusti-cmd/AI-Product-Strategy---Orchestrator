@@ -251,6 +251,7 @@
       <div class="model-chip"><span class="dot"></span>OpenAI</div>
       <div class="model-chip"><span class="dot"></span>Google</div>
       <div class="status-live"><span class="dot"></span>LIVE</div>
+      <div class="auth-widget" id="auth-widget"></div>
       <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle color theme">MODE</button>
     </div>
   </div>
@@ -521,6 +522,13 @@
 
   Aiven.initChrome();
   function toast(msg) { Aiven.toast(msg); }
+
+  Aiven.auth.onChange(function (user) {
+    var hint = document.getElementById("console-hint");
+    hint.textContent = user
+      ? "Signed in — Orchestrate runs a real Claude call against your workspace."
+      : "Viewing the read-only public demo — sign in above to run a real Claude orchestration.";
+  });
 
   /* ---------------- data: chips ---------------- */
   var DEPTS = [

@@ -18,7 +18,7 @@ Running list of ideas surfaced while building the prototype that are out of scop
 
 ## Platform / real build
 - ~~Replace simulated agent runs with real API calls to Claude, GPT, and Gemini behind a common orchestration interface~~ — **built, partially**: the Command Center's orchestration run calls a real Claude model via a Supabase Edge Function (`01-the-bet/prototype/supabase/functions/orchestrate/`). It's one real call producing structured per-agent output, not six independent agent calls, and not yet multi-provider (Claude only). See `01-the-bet/prototype.md`.
-- Real auth + multi-tenant workspace model (SSO/RBAC) — still open; every table is currently readable/writable by the public anon key, a documented tradeoff in `01-the-bet/prototype/supabase/README.md`.
+- ~~Real auth + multi-tenant workspace model (SSO/RBAC)~~ — **built, partially**: email magic-link sign-in with a real per-user private workspace, auto-provisioned and RLS-isolated, plus a read-only public demo for anonymous visitors (`01-the-bet/prototype/supabase/migrations/0003`–`0005`). Not yet built: SSO, teams/invites (one workspace per user only), and RBAC within a workspace. See `01-the-bet/prototype/supabase/README.md`.
 - ~~Persistent backend~~ — **built**: a real Supabase Postgres database (`01-the-bet/prototype/supabase/migrations/`) replaces the localStorage simulation. State is now shared across every visitor, not just carried across pages in one browser.
 - Integrations catalog for the data sources currently just listed as chips (NetSuite, Salesforce, Zendesk, Snowflake, Workday)
 

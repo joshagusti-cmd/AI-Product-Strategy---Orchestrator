@@ -71,12 +71,38 @@ function json(body: unknown, status = 200) {
   });
 }
 
+// Supabase JWTs (both the anon key and a real user's access token) carry
+// a `role` claim: "anon" for the public key, "authenticated" for a
+// signed-in user. This call is a real, metered Anthropic API request —
+// gate it to signed-in users only, so an anonymous visitor to the public
+// demo can't run up the API bill for free.
+function getJwtRole(authHeader: string | null): string | null {
+  if (!authHeader) return null;
+  const token = authHeader.replace(/^Bearer\s+/i, "");
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return payload.role || null;
+  } catch {
+    return null;
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: CORS_HEADERS });
   }
   if (req.method !== "POST") {
     return json({ error: "Use POST." }, 405);
+  }
+
+  const role = getJwtRole(req.headers.get("authorization"));
+  if (role !== "authenticated") {
+    return json(
+      { error: "Sign in to orchestrate — this triggers a real, metered Claude API call and is limited to signed-in workspaces. The public demo data is view-only." },
+      401,
+    );
   }
 
   let objective: string, departments: string[], sources: string[];
