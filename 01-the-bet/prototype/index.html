@@ -827,8 +827,10 @@
         detail: "Decided via the Command Center's live-run approval panel."
       }).catch(function (e) { console.error("Failed to log audit entry", e); });
     }
-    if (id === "run-approval" && decision === "approved" && window.__resumeRun) {
+    if (id === window.__pendingApprovalId && decision === "approved" && window.__resumeRun) {
       window.__resumeRun();
+      window.__resumeRun = null;
+      window.__pendingApprovalId = null;
     }
   }
   renderApprovals();
@@ -869,6 +871,8 @@
   btn.addEventListener("click", async function () {
     if (running) return;
     running = true;
+    window.__resumeRun = null;
+    window.__pendingApprovalId = null;
     btn.disabled = true;
     btn.innerHTML = "<span>■</span> Orchestrating…";
     document.getElementById("kpi-workflows").textContent = "4";
@@ -946,11 +950,13 @@
       setTimeout(function () {
         if (s.riskFlag && s.riskFlag.text) {
           setStepState(i, "approval", s.detail);
+          var approvalId = "run-approval-" + Date.now() + "-" + i;
           APPROVALS.unshift({
-            id: "run-approval", title: s.riskFlag.text,
+            id: approvalId, title: s.riskFlag.text,
             by: s.agentName || AGENT_LABELS[s.agentId] || "Risk & Compliance Agent",
             risk: s.riskFlag.severity || "High", age: "just now", _new: true
           });
+          window.__pendingApprovalId = approvalId;
           renderApprovals();
           document.getElementById("kpi-approvals-delta").textContent = "new: " + (s.riskFlag.severity || "High").toLowerCase() + " risk";
           toast("Approval required — " + (s.agentName || "Risk & Compliance Agent") + " paused the workflow");
