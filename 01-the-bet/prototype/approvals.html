@@ -81,12 +81,13 @@
 
 <div class="toast-wrap" id="toast-wrap"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script src="assets/data.js"></script>
 <script>
 (function () {
   "use strict";
   Aiven.initChrome();
-  var state = Aiven.getState();
+  var state = { approvals: [] };
   var RISKS = ["All", "High", "Medium", "Low"];
   var activeRisk = "All";
 
@@ -127,28 +128,40 @@
           "<button class='btn ghost reject small' data-id='" + a.id + "' data-decision='rejected'>Reject</button></div>"
         : "<span class='decided-pill " + a.status + "'>" + (a.status === "approved" ? "✓ Approved" : "✕ Rejected") + "</span>";
       return "<tr><td class='name'>" + a.title + "</td><td>" + a.agent + "</td><td>" + a.dept + "</td>" +
-        "<td><span class='risk-pill " + a.risk + "'>" + a.risk + "</span></td><td class='mono'>" + a.requestedAt + "</td>" +
+        "<td><span class='risk-pill " + a.risk + "'>" + a.risk + "</span></td><td class='mono' title='" + new Date(a.requestedAt).toLocaleString() + "'>" + Aiven.timeAgo(a.requestedAt) + "</td>" +
         "<td>" + decision + "</td></tr>";
     }).join("");
 
     Array.prototype.forEach.call(body.querySelectorAll("button[data-decision]"), function (btn) {
-      btn.addEventListener("click", function () {
+      btn.addEventListener("click", async function () {
         var a = state.approvals.find(function (x) { return x.id === btn.dataset.id; });
-        a.status = btn.dataset.decision;
-        Aiven.setState(function () {});
-        Aiven.addAudit({ actor: "Human reviewer", model: "—", risk: a.risk,
-          action: (a.status === "approved" ? "Approved: " : "Rejected: ") + a.title,
-          detail: "Raised by " + a.agent + " · " + a.dept + " · decided via the Approval Queue." });
-        Aiven.toast("Request " + a.status + " — recorded to audit trail");
-        renderKpis();
-        renderTable();
+        var decision = btn.dataset.decision;
+        Array.prototype.forEach.call(body.querySelectorAll("button[data-decision][data-id='" + a.id + "']"), function (b) { b.disabled = true; });
+        try {
+          await Aiven.decideApproval(a.id, decision);
+          a.status = decision;
+          await Aiven.addAudit({ actor: "Human reviewer", model: "—", risk: a.risk,
+            action: (a.status === "approved" ? "Approved: " : "Rejected: ") + a.title,
+            detail: "Raised by " + a.agent + " · " + a.dept + " · decided via the Approval Queue." });
+          Aiven.toast("Request " + a.status + " — recorded to audit trail");
+          renderKpis();
+          renderTable();
+        } catch (e) {
+          Aiven.toast("Couldn't record decision: " + e.message);
+          renderTable();
+        }
       });
     });
   }
 
-  renderFilters();
-  renderKpis();
-  renderTable();
+  Aiven.loadState().then(function (s) {
+    state = s;
+    renderFilters();
+    renderKpis();
+    renderTable();
+  }).catch(function (e) {
+    Aiven.toast("Couldn't load the Approval Queue: " + e.message);
+  });
 })();
 </script>
 </body>

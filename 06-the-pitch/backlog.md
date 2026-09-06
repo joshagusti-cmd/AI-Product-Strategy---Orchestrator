@@ -4,8 +4,8 @@ Input to the Horizon mapping in `roadmap.md`. Constructed from `feature-ideas.md
 
 | Summary | Type | Priority | Status | Component | Labels |
 |---|---|---|---|---|---|
-| Replace simulated agent runs with real model API calls | Epic | P0 | In Progress | The Contract | platform, core |
-| Persistent backend (prototype is stateless today) | Epic | P0 | In Progress | The Contract | platform, core |
+| Replace simulated agent runs with real model API calls | Epic | P0 | Done (prototype) | The Contract | platform, core |
+| Persistent backend (prototype is stateless today) | Epic | P0 | Done (prototype) | The Contract | platform, core |
 | Design-partner pilot with 1–2 fraud desks | Epic | P0 | Planned | The Bet | gtm, pilot |
 | Close the Network Intelligence feedback loop | Task | P0 | Planned | The Moat | data-flywheel |
 | Fix Domain Context Loop scoring inconsistency | Bug | P1 | Planned | The Moat | data-quality |

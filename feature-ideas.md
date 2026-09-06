@@ -17,9 +17,9 @@ Running list of ideas surfaced while building the prototype that are out of scop
 - ~~Shadow AI discovery scan (tie-in to `05-the-guardrails/compounding-system.md`'s Shadow AI Audit)~~ — **built at prototype fidelity**: `01-the-bet/prototype/shadow-ai.html`. Replacing the simulated scan with a real discovery audit is still open (see the Horizon 1 item in `06-the-pitch/roadmap.md`).
 
 ## Platform / real build
-- Replace simulated agent runs with real API calls to Claude, GPT, and Gemini behind a common orchestration interface
-- Real auth + multi-tenant workspace model (SSO/RBAC)
-- Persistent backend — **partially addressed at prototype fidelity**: the governance pages (Agent Registry, Policies, Approval Queue, Audit Trail, Shadow AI Audit) now share a localStorage-backed store (`01-the-bet/prototype/assets/data.js`) so state survives reload and carries across pages instead of resetting. That's still a client-side simulation, not a real shared backend — no multi-user state, no server, no durability beyond one browser.
+- ~~Replace simulated agent runs with real API calls to Claude, GPT, and Gemini behind a common orchestration interface~~ — **built, partially**: the Command Center's orchestration run calls a real Claude model via a Supabase Edge Function (`01-the-bet/prototype/supabase/functions/orchestrate/`). It's one real call producing structured per-agent output, not six independent agent calls, and not yet multi-provider (Claude only). See `01-the-bet/prototype.md`.
+- Real auth + multi-tenant workspace model (SSO/RBAC) — still open; every table is currently readable/writable by the public anon key, a documented tradeoff in `01-the-bet/prototype/supabase/README.md`.
+- ~~Persistent backend~~ — **built**: a real Supabase Postgres database (`01-the-bet/prototype/supabase/migrations/`) replaces the localStorage simulation. State is now shared across every visitor, not just carried across pages in one browser.
 - Integrations catalog for the data sources currently just listed as chips (NetSuite, Salesforce, Zendesk, Snowflake, Workday)
 
 ## Positioning to test with buyers
