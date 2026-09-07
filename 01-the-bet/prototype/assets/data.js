@@ -150,7 +150,13 @@
   function mapApproval(row) {
     return {
       id: row.id, title: row.title, agent: row.agent, dept: row.dept,
-      risk: row.risk, status: row.status, requestedAt: row.requested_at
+      risk: row.risk, status: row.status, requestedAt: row.requested_at,
+      // Present only on an approval a real Orchestrate run raised by
+      // pausing for the Core-tier policy gate (migrations/0011) — lets a
+      // page know to actually resume the run once approved, not just
+      // flip a status. `hasRunState` is a boolean mirror of run_state's
+      // presence; the full payload isn't needed client-side.
+      hasRunState: !!row.run_state, resumed: !!row.resumed_at
     };
   }
   function mapAudit(row) {
@@ -338,7 +344,40 @@
     if (!resp.ok || body.error) {
       throw new Error(body.error || ("Orchestration request failed (" + resp.status + ")"));
     }
-    return body; // { result, model, usage, substitutions, routing }
+    // { result, model, usage, substitutions, routing } for a completed
+    // run, or { paused: true, approvalId, steps, riskFlag, policy,
+    // routing } if the Core-tier policy gate paused it — see
+    // supabase/functions/orchestrate/index.ts.
+    return body;
+  }
+
+  // Continues a run that paused for policy approval (see orchestrate()
+  // above) — call once its approvals row is decided. Real per-call
+  // telemetry, spend, and the eventual executive result all come from
+  // this same real Anthropic call chain the original run started;
+  // nothing here is re-simulated client-side. Returns the same shape as
+  // orchestrate() on success, or { rejected: true, error } if the run
+  // was rejected instead of approved (not thrown — a real decision, not
+  // a failure).
+  async function resumeOrchestrate(approvalId) {
+    await ready;
+    var session = (await sb.auth.getSession()).data.session;
+    var token = session ? session.access_token : SUPABASE_ANON_KEY;
+    var resp = await fetch(ORCHESTRATE_FUNCTION_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "apikey": SUPABASE_ANON_KEY,
+        "authorization": "Bearer " + token
+      },
+      body: JSON.stringify({ resumeApprovalId: approvalId })
+    });
+    var body = await resp.json().catch(function () { return {}; });
+    if (body.rejected) return body;
+    if (!resp.ok || body.error) {
+      throw new Error(body.error || ("Resume request failed (" + resp.status + ")"));
+    }
+    return body; // { result, model, usage, substitutions, routing, resumedApprovalId }
   }
 
   // Reads the caller's own workspace's rolling-24h Orchestrate usage
@@ -721,6 +760,7 @@
     addAudit: addAudit,
     resetState: resetState,
     orchestrate: orchestrate,
+    resumeOrchestrate: resumeOrchestrate,
     getUsage: getUsage,
     getRealSpend: getRealSpend,
     setPlan: setPlan,

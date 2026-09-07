@@ -837,50 +837,79 @@
   window.addEventListener("resize", function () { drawROI(); });
 
   /* ---------------- approvals (this run only) ---------------- */
-  var APPROVALS = [
-    { id: "a1", title: "Publish Q3 Vendor Risk Review to Legal workspace", by: "Risk & Compliance Agent", risk: "Medium", age: "6h ago" },
-    { id: "a2", title: "Grant Finance Agent read access to Q4 forecast model", by: "Orchestrator Core", risk: "Low", age: "1d ago" }
-  ];
-  var decisions = {};
+  // Real now, not illustrative seed rows: this panel shows the single
+  // approval the current run raised by pausing at the Policy Editor's
+  // Core-tier gate (see supabase/functions/orchestrate/index.ts), backed
+  // by the same real `approvals` table and RLS as the org-wide Approval
+  // Queue (approvals.html) — deciding it here really approves/rejects
+  // that row, and approving really resumes the run's remaining real
+  // Claude calls (Strategy + Writer). Empty whenever no run is paused.
+  var currentApproval = null; // { id, title, agent, risk }
+  var decidingApproval = false;
 
   function renderApprovals() {
     var wrap = document.getElementById("approval-list");
-    wrap.innerHTML = "";
-    APPROVALS.forEach(function (a) {
-      var el = document.createElement("div");
-      el.className = "approval-card" + (a._new ? " new" : "");
-      var decided = decisions[a.id];
-      el.innerHTML =
-        "<div class='approval-top'><span class='approval-title'>" + a.title + "</span>" +
-        "<span class='risk-pill " + a.risk + "'>" + a.risk + "</span></div>" +
-        "<div class='approval-meta'>" + a.by + " · " + a.age + "</div>" +
-        (decided
-          ? "<div class='decided " + decided + "'>" + (decided === "approved" ? "✓ Approved" : "✕ Rejected") + " this session</div>"
-          : "<div class='approval-actions'><button class='approve'>Approve</button><button class='reject'>Reject</button></div>");
-      wrap.appendChild(el);
-      if (!decided) {
-        el.querySelector(".approve").addEventListener("click", function () { decide(a.id, "approved"); });
-        el.querySelector(".reject").addEventListener("click", function () { decide(a.id, "rejected"); });
-      }
-    });
-    document.getElementById("kpi-approvals").textContent = APPROVALS.filter(function (a) { return !decisions[a.id]; }).length;
+    if (!currentApproval) {
+      wrap.innerHTML = "<div class='hint' style='padding:14px 2px;'>No approval pending for the current run.</div>";
+      document.getElementById("kpi-approvals").textContent = "0";
+      document.getElementById("kpi-approvals-delta").textContent = "none pending";
+      document.getElementById("kpi-approvals-delta").className = "delta";
+      return;
+    }
+    var a = currentApproval;
+    wrap.innerHTML =
+      "<div class='approval-card new'><div class='approval-top'><span class='approval-title'>" + a.title + "</span>" +
+      "<span class='risk-pill " + a.risk + "'>" + a.risk + "</span></div>" +
+      "<div class='approval-meta'>" + a.agent + " · policy: " + a.policyAutonomy + " (threshold " + a.policyThreshold + ")</div>" +
+      "<div class='approval-actions'><button class='approve'" + (decidingApproval ? " disabled" : "") + ">Approve</button>" +
+      "<button class='reject'" + (decidingApproval ? " disabled" : "") + ">Reject</button></div></div>";
+    if (!decidingApproval) {
+      wrap.querySelector(".approve").addEventListener("click", function () { decideCurrentApproval("approved"); });
+      wrap.querySelector(".reject").addEventListener("click", function () { decideCurrentApproval("rejected"); });
+    }
+    document.getElementById("kpi-approvals").textContent = "1";
+    document.getElementById("kpi-approvals-delta").textContent = "awaiting decision";
+    document.getElementById("kpi-approvals-delta").className = "delta warn";
   }
-  function decide(id, decision) {
-    decisions[id] = decision;
+
+  async function decideCurrentApproval(decision) {
+    var a = currentApproval;
+    if (!a || decidingApproval) return;
+    decidingApproval = true;
     renderApprovals();
-    toast("Approval " + decision + " — recorded to audit trail");
-    var a = APPROVALS.find(function (x) { return x.id === id; });
-    if (a) {
-      Aiven.addAudit({
+    try {
+      await Aiven.decideApproval(a.id, decision);
+      toast("Approval " + decision + " — recorded to audit trail");
+      await Aiven.addAudit({
         actor: "Human reviewer", risk: a.risk, model: "—",
         action: (decision === "approved" ? "Approved: " : "Rejected: ") + a.title,
         detail: "Decided via the Command Center's live-run approval panel."
       }).catch(function (e) { console.error("Failed to log audit entry", e); });
-    }
-    if (id === window.__pendingApprovalId && decision === "approved" && window.__resumeRun) {
-      window.__resumeRun();
-      window.__resumeRun = null;
-      window.__pendingApprovalId = null;
+
+      if (decision === "rejected") {
+        markPausedStepRejected();
+        toast("Run rejected — no executive deliverable was generated past the Risk & Compliance step.");
+        currentApproval = null;
+        decidingApproval = false;
+        renderApprovals();
+        return;
+      }
+
+      toast("Resuming the paused run — real Claude calls in progress…");
+      var res = await Aiven.resumeOrchestrate(a.id);
+      currentApproval = null;
+      decidingApproval = false;
+      renderApprovals();
+      if (res.rejected) {
+        markPausedStepRejected();
+        toast(res.error);
+        return;
+      }
+      completeResumedRun(res);
+    } catch (e) {
+      decidingApproval = false;
+      renderApprovals();
+      toast("Couldn't record decision: " + e.message);
     }
   }
   renderApprovals();
@@ -907,7 +936,11 @@
   };
 
   var btn = document.getElementById("orchestrate-btn");
+  var tl = document.getElementById("timeline");
   var running = false;
+  var stepEls = [];       // current run's rendered step elements, by index
+  var pausedStepIndex = -1; // index of the step showing "needs approval", or -1
+  var runObjective = "";  // objective text for whichever run is in flight/paused
 
   function resetRunButtons() {
     running = false;
@@ -918,22 +951,205 @@
     drawNetwork();
   }
 
+  function setStepState(i, state, detail) {
+    var el = stepEls[i];
+    if (!el) return;
+    el.className = "step visible state-" + state;
+    el.querySelector(".step-tag").textContent = state === "approval" ? "needs approval" : state;
+    if (detail) el.querySelector(".step-detail").textContent = detail;
+  }
+
+  function renderQueuedSteps(steps) {
+    stepEls = steps.map(function (s, i) {
+      var d = document.createElement("div");
+      d.className = "step state-queued";
+      d.innerHTML =
+        "<div class='step-marker'><div class='step-dot'></div>" + (i < steps.length - 1 ? "<div class='step-line'></div>" : "") + "</div>" +
+        "<div class='step-body'><div class='step-top'><span class='step-title'>" + s.title + "</span><span class='step-tag'>queued</span></div>" +
+        "<div class='step-meta'>" + (s.agentName || AGENT_LABELS[s.agentId] || s.agentId) + "</div><div class='step-detail'></div></div>";
+      tl.appendChild(d);
+      return d;
+    });
+  }
+
+  // Renders a paused response's already-completed steps (research/
+  // finance/ops/risk) immediately as done, with the last (risk) step
+  // shown as a real "needs approval" — the server already decided to
+  // pause before this response even arrived, so there's nothing left to
+  // animate here; the pause itself is real, not staged.
+  function renderPausedSteps(response) {
+    var steps = response.steps || [];
+    stepEls = steps.map(function (s, i) {
+      var isLast = i === steps.length - 1;
+      var d = document.createElement("div");
+      d.className = "step visible state-" + (isLast ? "approval" : "done");
+      d.innerHTML =
+        "<div class='step-marker'><div class='step-dot'></div>" + (i < steps.length - 1 ? "<div class='step-line'></div>" : "") + "</div>" +
+        "<div class='step-body'><div class='step-top'><span class='step-title'>" + s.title + "</span><span class='step-tag'>" + (isLast ? "needs approval" : "done") + "</span></div>" +
+        "<div class='step-meta'>" + (s.agentName || AGENT_LABELS[s.agentId] || s.agentId) + "</div><div class='step-detail'>" + s.detail + "</div></div>";
+      tl.appendChild(d);
+      var a = AGENTS.find(function (x) { return x.id === s.agentId; });
+      if (a) a.status = "done";
+      return d;
+    });
+    pausedStepIndex = steps.length - 1;
+    activeAgentIds = [];
+    drawNetwork();
+  }
+
+  // Marks the paused step as rejected in place — the run really ends
+  // here; nothing further is animated because nothing further ran.
+  function markPausedStepRejected() {
+    if (pausedStepIndex < 0 || !stepEls[pausedStepIndex]) return;
+    var el = stepEls[pausedStepIndex];
+    el.className = "step visible state-done";
+    var tag = el.querySelector(".step-tag");
+    tag.textContent = "rejected";
+    tag.style.color = "var(--critical)";
+    tag.style.borderColor = "var(--critical)";
+    var detailEl = el.querySelector(".step-detail");
+    detailEl.textContent = detailEl.textContent + " — Rejected; the run was terminated here.";
+    pausedStepIndex = -1;
+  }
+
+  // Plays a completed run's steps into the timeline one at a time for
+  // visual pacing. Real gating already happened server-side before this
+  // response arrived (see the Policy Editor), so a step carrying a
+  // riskFlag here means it was flagged but didn't cross the policy's
+  // approval gate — noted in its detail, not staged as a fake pause.
+  function playStepsThenFinish(steps, onDone) {
+    var i = 0;
+    function next() {
+      if (i >= steps.length) return onDone();
+      var s = steps[i];
+      setStepState(i, "running");
+      if (s.agentId) activeAgentIds = [s.agentId];
+      drawNetwork();
+      setTimeout(function () {
+        var detail = s.detail;
+        if (s.riskFlag && s.riskFlag.text) {
+          detail += " Flagged (" + (s.riskFlag.severity || "High") + ") — below the compliance policy's approval gate, so the run continued automatically.";
+        }
+        setStepState(i, "done", detail);
+        var a = AGENTS.find(function (x) { return x.id === s.agentId; });
+        if (a) a.status = "done";
+        i++;
+        next();
+      }, 550 + Math.random() * 450);
+    }
+    next();
+  }
+
+  // Continues a paused run's timeline once it's been approved and
+  // resumed for real (Strategy + Writer, real Claude calls already
+  // completed by the time this is called) — appends those two steps and
+  // hands off to finish() exactly like a run that never paused.
+  function completeResumedRun(res) {
+    var steps = (res.result && res.result.steps) || [];
+    if (pausedStepIndex >= 0) {
+      setStepState(pausedStepIndex, "done", steps[pausedStepIndex] ? steps[pausedStepIndex].detail : "Approved — run resumed.");
+      pausedStepIndex = -1;
+    }
+    var startIdx = stepEls.length;
+    var newSteps = steps.slice(startIdx);
+    newSteps.forEach(function (s, offset) {
+      var d = document.createElement("div");
+      d.className = "step visible state-running";
+      d.innerHTML =
+        "<div class='step-marker'><div class='step-dot'></div>" + (offset < newSteps.length - 1 ? "<div class='step-line'></div>" : "") + "</div>" +
+        "<div class='step-body'><div class='step-top'><span class='step-title'>" + s.title + "</span><span class='step-tag'>running</span></div>" +
+        "<div class='step-meta'>" + (s.agentName || AGENT_LABELS[s.agentId] || s.agentId) + "</div><div class='step-detail'></div></div>";
+      tl.appendChild(d);
+      stepEls[startIdx + offset] = d;
+    });
+    if (newSteps.length && newSteps[0].agentId) activeAgentIds = [newSteps[0].agentId];
+    drawNetwork();
+    newSteps.forEach(function (s, offset) {
+      setTimeout(function () {
+        setStepState(startIdx + offset, "done", s.detail);
+        var a = AGENTS.find(function (x) { return x.id === s.agentId; });
+        if (a) a.status = "done";
+        if (offset === newSteps.length - 1) {
+          activeAgentIds = [];
+          drawNetwork();
+          finish(res, res.result, runObjective);
+        } else if (newSteps[offset + 1] && newSteps[offset + 1].agentId) {
+          activeAgentIds = [newSteps[offset + 1].agentId];
+          drawNetwork();
+        }
+      }, 350 + offset * 550);
+    });
+  }
+
+  function finish(response, result, objective) {
+    resetRunButtons();
+    document.getElementById("kpi-workflows").textContent = "3";
+    document.getElementById("kpi-workflows-delta").textContent = "completed";
+    document.getElementById("kpi-workflows-delta").className = "delta";
+
+    var hours = 42 + Math.floor(Math.random() * 10);
+    var cost = (hours * 78);
+    document.getElementById("roi-hours").textContent = hours + " hrs";
+    document.getElementById("roi-cost").textContent = "$" + cost.toLocaleString();
+    document.getElementById("roi-cycle").textContent = "3 wks → 21 min";
+    drawROI(hours);
+
+    var newTotal = 412 + hours;
+    document.getElementById("kpi-time").innerHTML = newTotal + " <small>hrs</small>";
+    document.getElementById("kpi-time-delta").textContent = "+" + hours + " from this run";
+    var newImpact = (184200 + cost);
+    document.getElementById("kpi-impact").textContent = "$" + (newImpact / 1000).toFixed(1) + "k";
+    document.getElementById("kpi-impact-delta").textContent = "+$" + cost.toLocaleString() + " from this run";
+
+    renderDeliverable(result, objective);
+    var dw = document.getElementById("deliverable-wrap");
+    dw.classList.add("show");
+    dw.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+    toast("Executive Action Plan ready — routed for review (6 real Claude calls · " + (response.model || "model unknown") + ")");
+
+    var subs = response.substitutions || [];
+    if (subs.length) {
+      var subText = subs.map(function (s) { return s.agentName + " (" + s.requested + " → " + s.used + ")"; }).join(", ");
+      toast((subs.length === 1 ? "1 agent" : subs.length + " agents") + " requested a model with no key configured — ran on: " + subText);
+    }
+
+    var routing = response.routing;
+    if (routing && routing.mode === "auto") {
+      var tierDesc = {
+        baseline: "Baseline (Haiku for routine pulls, Sonnet for synthesis)",
+        elevated: "Elevated (Sonnet across the board, Opus on Risk & Compliance)",
+        high: "High-stakes (Opus on Risk, Strategy, and the Writer)"
+      }[routing.tier] || routing.tier;
+      var why = routing.matchedKeywords && routing.matchedKeywords.length
+        ? "risk keywords matched: " + routing.matchedKeywords.join(", ")
+        : "scope size " + routing.complexityScore + " department(s)+source(s), no risk keywords matched";
+      toast("Auto-routed to the " + tierDesc + " tier — " + why + ".");
+    }
+
+    Aiven.addAudit({
+      actor: "Executive Writer Agent", model: response.model || AGENTS[5].model, risk: "—",
+      action: "Drafted the executive action plan for: “" + objective + "”",
+      detail: response.resumedApprovalId
+        ? "Real Claude orchestration run, resumed after policy approval. Deliverable compiled and staged for executive review. See Audit Trail for the full log."
+        : "Real Claude orchestration run. Deliverable compiled and staged for executive review. See Audit Trail for the full log."
+    }).catch(function (e) { console.error("Failed to log audit entry", e); });
+  }
+
   btn.addEventListener("click", async function () {
     if (running) return;
     running = true;
-    window.__resumeRun = null;
-    window.__pendingApprovalId = null;
     btn.disabled = true;
     btn.innerHTML = "<span>■</span> Orchestrating…";
     document.getElementById("kpi-workflows").textContent = "4";
     document.getElementById("kpi-workflows-delta").textContent = "+1 just started";
     document.getElementById("kpi-workflows-delta").className = "delta up";
     document.getElementById("timeline-empty").style.display = "none";
-    document.getElementById("timeline").querySelectorAll(".step").forEach(function (n) { n.remove(); });
+    tl.querySelectorAll(".step").forEach(function (n) { n.remove(); });
     document.getElementById("deliverable-wrap").classList.remove("show");
     activeAgentIds = [];
+    stepEls = [];
+    pausedStepIndex = -1;
 
-    var tl = document.getElementById("timeline");
     var loadingEl = document.createElement("div");
     loadingEl.className = "step visible state-running";
     loadingEl.innerHTML =
@@ -971,6 +1187,28 @@
     loadingEl.remove();
     refreshUsageHint(Aiven.auth.getUser());
 
+    // The Policy Editor's Core-tier gate (see supabase/functions/
+    // orchestrate) already decided, server-side, to pause this run
+    // before Strategy/Writer ever ran — nothing to animate through,
+    // just show what's real: the four completed steps, and a real
+    // approval waiting in the panel below.
+    if (response.paused) {
+      runObjective = objective;
+      renderPausedSteps(response);
+      resetRunButtons();
+      document.getElementById("kpi-workflows-delta").textContent = "paused for approval";
+      document.getElementById("kpi-workflows-delta").className = "delta warn";
+      currentApproval = {
+        id: response.approvalId, title: response.riskFlag.text, agent: "Risk & Compliance Agent",
+        risk: response.riskFlag.severity || "High",
+        policyAutonomy: (response.policy && response.policy.autonomy) || "—",
+        policyThreshold: (response.policy && response.policy.riskThreshold != null) ? response.policy.riskThreshold : "—"
+      };
+      renderApprovals();
+      toast("Approval required — Risk & Compliance Agent paused the workflow (policy: " + currentApproval.policyAutonomy + ", threshold " + currentApproval.policyThreshold + ").");
+      return;
+    }
+
     var result = response.result || {};
     var steps = result.steps || [];
     if (!steps.length) {
@@ -981,113 +1219,8 @@
       return;
     }
 
-    var stepEls = steps.map(function (s, i) {
-      var d = document.createElement("div");
-      d.className = "step state-queued";
-      d.innerHTML =
-        "<div class='step-marker'><div class='step-dot'></div>" + (i < steps.length - 1 ? "<div class='step-line'></div>" : "") + "</div>" +
-        "<div class='step-body'><div class='step-top'><span class='step-title'>" + s.title + "</span><span class='step-tag'>queued</span></div>" +
-        "<div class='step-meta'>" + (s.agentName || AGENT_LABELS[s.agentId] || s.agentId) + "</div><div class='step-detail'></div></div>";
-      tl.appendChild(d);
-      return d;
-    });
-
-    function setStepState(i, state, detail) {
-      var el = stepEls[i];
-      el.className = "step visible state-" + state;
-      el.querySelector(".step-tag").textContent = state === "approval" ? "needs approval" : state;
-      if (detail) el.querySelector(".step-detail").textContent = detail;
-    }
-
-    var i = 0;
-    function next() {
-      if (i >= steps.length) return finish();
-      var s = steps[i];
-      setStepState(i, "running");
-      if (s.agentId) activeAgentIds = [s.agentId];
-      drawNetwork();
-
-      setTimeout(function () {
-        if (s.riskFlag && s.riskFlag.text) {
-          setStepState(i, "approval", s.detail);
-          var approvalId = "run-approval-" + Date.now() + "-" + i;
-          APPROVALS.unshift({
-            id: approvalId, title: s.riskFlag.text,
-            by: s.agentName || AGENT_LABELS[s.agentId] || "Risk & Compliance Agent",
-            risk: s.riskFlag.severity || "High", age: "just now", _new: true
-          });
-          window.__pendingApprovalId = approvalId;
-          renderApprovals();
-          document.getElementById("kpi-approvals-delta").textContent = "new: " + (s.riskFlag.severity || "High").toLowerCase() + " risk";
-          toast("Approval required — " + (s.agentName || "Risk & Compliance Agent") + " paused the workflow");
-          window.__resumeRun = function () {
-            setStepState(i, "done", s.detail);
-            activeAgentIds = [];
-            i++;
-            next();
-          };
-          return; // pause here until approved via renderApprovals -> decide()
-        }
-        setStepState(i, "done", s.detail);
-        var a = AGENTS.find(function (x) { return x.id === s.agentId; });
-        if (a) a.status = "done";
-        i++;
-        next();
-      }, 550 + Math.random() * 450);
-    }
-    next();
-
-    function finish() {
-      resetRunButtons();
-      document.getElementById("kpi-workflows").textContent = "3";
-      document.getElementById("kpi-workflows-delta").textContent = "completed";
-      document.getElementById("kpi-workflows-delta").className = "delta";
-
-      var hours = 42 + Math.floor(Math.random() * 10);
-      var cost = (hours * 78);
-      document.getElementById("roi-hours").textContent = hours + " hrs";
-      document.getElementById("roi-cost").textContent = "$" + cost.toLocaleString();
-      document.getElementById("roi-cycle").textContent = "3 wks → 21 min";
-      drawROI(hours);
-
-      var newTotal = 412 + hours;
-      document.getElementById("kpi-time").innerHTML = newTotal + " <small>hrs</small>";
-      document.getElementById("kpi-time-delta").textContent = "+" + hours + " from this run";
-      var newImpact = (184200 + cost);
-      document.getElementById("kpi-impact").textContent = "$" + (newImpact / 1000).toFixed(1) + "k";
-      document.getElementById("kpi-impact-delta").textContent = "+$" + cost.toLocaleString() + " from this run";
-
-      renderDeliverable(result, objective);
-      var dw = document.getElementById("deliverable-wrap");
-      dw.classList.add("show");
-      dw.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
-      toast("Executive Action Plan ready — routed for review (6 real Claude calls · " + (response.model || "model unknown") + ")");
-
-      var subs = response.substitutions || [];
-      if (subs.length) {
-        var subText = subs.map(function (s) { return s.agentName + " (" + s.requested + " → " + s.used + ")"; }).join(", ");
-        toast((subs.length === 1 ? "1 agent" : subs.length + " agents") + " requested a model with no key configured — ran on: " + subText);
-      }
-
-      var routing = response.routing;
-      if (routing && routing.mode === "auto") {
-        var tierDesc = {
-          baseline: "Baseline (Haiku for routine pulls, Sonnet for synthesis)",
-          elevated: "Elevated (Sonnet across the board, Opus on Risk & Compliance)",
-          high: "High-stakes (Opus on Risk, Strategy, and the Writer)"
-        }[routing.tier] || routing.tier;
-        var why = routing.matchedKeywords && routing.matchedKeywords.length
-          ? "risk keywords matched: " + routing.matchedKeywords.join(", ")
-          : "scope size " + routing.complexityScore + " department(s)+source(s), no risk keywords matched";
-        toast("Auto-routed to the " + tierDesc + " tier — " + why + ".");
-      }
-
-      Aiven.addAudit({
-        actor: "Executive Writer Agent", model: response.model || AGENTS[5].model, risk: "—",
-        action: "Drafted the executive action plan for: “" + objective + "”",
-        detail: "Real Claude orchestration run. Deliverable compiled and staged for executive review. See Audit Trail for the full log."
-      }).catch(function (e) { console.error("Failed to log audit entry", e); });
-    }
+    renderQueuedSteps(steps);
+    playStepsThenFinish(steps, function () { finish(response, result, objective); });
   });
 
   /* ---------------- deliverable render (real content from the model) ---------------- */

@@ -36,6 +36,18 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // below — the "cost-based automatic model routing" cascade this
 // product's own pricing model (03-the-margin/cost-curve.md) describes,
 // now actually implemented rather than just manually picked per agent.
+//
+// The Policy Editor's Core-tier policy (id: 'compliance' — the tier
+// every Command Center agent belongs to) now actually gates this
+// pipeline, instead of the policies table having no real consumer: if
+// that policy's autonomy is "Approval-required" or "Two-gate" and the
+// Risk & Compliance Agent's real risk flag scores at or above its
+// risk_threshold, the run pauses right there — the Strategy and Writer
+// calls (and their real API cost) don't happen until a human approves
+// it in the Approval Queue (or the Command Center's own approval
+// panel). Rejecting it ends the run for real: no executive deliverable
+// is ever generated. See shouldPauseForPolicy/createPendingApproval/
+// handleResume below, and migrations/0011_policy_gated_approvals.sql.
 
 // Objective text and scope size are the only signals available before
 // any agent has run — this is a real, cheap, explainable heuristic, not
@@ -49,6 +61,13 @@ const RISK_KEYWORDS = [
   "data breach", "discrimination", "harassment", "earnings", "merger", "acquisition",
   "restructuring", "whistleblower", "investigation",
 ];
+
+// Maps the Risk & Compliance Agent's qualitative riskFlag.severity to a
+// number comparable against a policy's 0-100 risk_threshold. Real and
+// deterministic, not a trained score — same honesty as computeAutoRoute
+// below: a first cut at "does this cross the policy's line," not a
+// claim of true scored risk assessment.
+const RISK_SEVERITY_SCORE: Record<string, number> = { Low: 25, Medium: 60, High: 90 };
 
 type AutoTier = "baseline" | "elevated" | "high";
 
@@ -304,6 +323,59 @@ async function logCall(
   }
 }
 
+// Reads the workspace's Core-tier policy (id: 'compliance' — the tier
+// every Command Center agent belongs to; see migrations/0011). Returns
+// null if it's missing (e.g. hand-edited out of the demo data) so the
+// gate fails OPEN — the run completes exactly as it did before this
+// feature existed, rather than a deleted seed row silently wedging
+// every future run in this workspace.
+async function getCompliancePolicy(workspaceId: string): Promise<{ autonomy: string; risk_threshold: number } | null> {
+  const resp = await serviceRoleFetch(
+    `policies?select=autonomy,risk_threshold&workspace_id=eq.${workspaceId}&id=eq.compliance`,
+  );
+  if (!resp.ok) return null;
+  const rows = await resp.json();
+  return rows[0] || null;
+}
+
+// The real gate: only "Approval-required" and "Two-gate" autonomy ever
+// pause a run — "Autonomous" and "Advisory" mean exactly what their
+// labels say (generate automatically; advisory-only for the human) and
+// never block. A "Two-gate" policy's second gate (approval to
+// distribute externally) isn't modeled here — the Command Center has no
+// separate "send externally" action to gate — so both block the same
+// single point, before the Strategy/Writer calls.
+function shouldPauseForPolicy(policy: { autonomy: string; risk_threshold: number } | null, riskFlag: { severity?: string }): boolean {
+  if (!policy) return false;
+  if (policy.autonomy !== "Approval-required" && policy.autonomy !== "Two-gate") return false;
+  const score = RISK_SEVERITY_SCORE[riskFlag.severity || ""] || 0;
+  return score >= policy.risk_threshold;
+}
+
+// Inserts a real, workspace-visible approvals row (via the service role
+// key, same as every other write in this file) carrying everything
+// needed to resume the run later — see handleResume below. Any
+// workspace member can approve/reject it, from the Approval Queue or
+// the Command Center's own approval panel (RLS: migrations/0003).
+async function createPendingApproval(workspaceId: string, riskFlag: { severity?: string; text: string }, runState: Record<string, unknown>): Promise<string> {
+  const id = "run-" + crypto.randomUUID();
+  const departments = Array.isArray(runState.departments) ? (runState.departments as string[]) : [];
+  await serviceRoleFetch("approvals", {
+    method: "POST",
+    body: JSON.stringify({
+      workspace_id: workspaceId,
+      id,
+      title: riskFlag.text,
+      agent: "Risk & Compliance Agent",
+      dept: departments.length ? departments.join(", ") : "Cross-functional",
+      risk: riskFlag.severity || "High",
+      status: "pending",
+      run_state: runState,
+    }),
+  });
+  return id;
+}
+
 // One real Anthropic call for one agent's turn. Throws a descriptive
 // error (naming the agent) on any failure so the caller can abort the
 // whole run cleanly instead of returning a partial result.
@@ -358,6 +430,198 @@ async function callAgent(opts: {
   return { input: toolUse.input, usage: data.usage, model: data.model as string };
 }
 
+// Shared per-agent context, threaded through runOneAgent for both a
+// fresh run and a resumed one — so the two code paths can't drift.
+type RunCtx = {
+  apiKey: string;
+  workspaceId: string;
+  userId: string;
+  objective: string;
+  departments: string[];
+  sources: string[];
+  agentModels: Record<string, unknown>;
+  autoRoute: boolean;
+  autoRouteResult: ReturnType<typeof computeAutoRoute> | null;
+  briefing: string;
+  steps: Array<{ agentId: string; agentName: string; title: string; detail: string; riskFlag?: { severity: string; text: string } }>;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  modelsUsed: Set<string>;
+  substitutions: Array<{ agentId: string; agentName: string; requested: string; used: string }>;
+};
+
+type AgentOutcome =
+  | { kind: "continue" }
+  | { kind: "paused"; approvalId: string; riskFlag: { severity?: string; text: string }; policy: { autonomy: string; risk_threshold: number } }
+  | { kind: "final"; result: { executiveSummary: string; steps: RunCtx["steps"]; findings: string[]; recommendations: unknown[]; riskFlags: string[] } };
+
+function routingInfo(ctx: RunCtx) {
+  return ctx.autoRouteResult
+    ? { mode: "auto", tier: ctx.autoRouteResult.tier, matchedKeywords: ctx.autoRouteResult.matchedKeywords, complexityScore: ctx.autoRouteResult.complexityScore }
+    : { mode: "manual" };
+}
+
+// Runs one agent's real Claude call, logs it, and appends its step.
+// For the Risk & Compliance Agent specifically, also evaluates the
+// workspace's Core-tier policy against its riskFlag — pausing the run
+// (kind: "paused") if it crosses the gate, instead of letting Strategy
+// and Writer run (and bill) unconditionally. Used by both a fresh run
+// and handleResume's continuation, so the two can't diverge.
+async function runOneAgent(agent: (typeof AGENT_DEFS)[number], ctx: RunCtx): Promise<AgentOutcome> {
+  const isWriter = agent.id === "writer";
+  const priorContext = ctx.steps.length
+    ? "Prior agents' findings so far, in order:\n" +
+      ctx.steps.map((s) => `- ${s.agentName}: ${s.title} — ${s.detail}`).join("\n")
+    : "You are the first agent in this run — no prior findings yet.";
+
+  const system = isWriter
+    ? `You are the Executive Writer Agent in the Aiven Orchestrator, a governed multi-agent enterprise workflow. Your role: ${agent.role}. You are the last agent in a real six-agent pipeline — draft the final executive-ready synthesis from everything the other five agents actually found. Do not claim to have queried real live data yourself; this is a governed simulation run for a product demo, but be concrete and specific, grounded in the prior agents' stated findings. Call the submit_final_result tool exactly once.`
+    : `You are the ${agent.name} in the Aiven Orchestrator, a governed multi-agent enterprise workflow. Your role: ${agent.role}. You are one agent in a real six-agent pipeline — see the prior agents' actual findings below and build on them where relevant (don't repeat what they already covered). Be concrete and specific — invent a plausible, clearly-illustrative finding, metric, or figure appropriate to the objective, as if you had actually queried the given data sources. Do not claim to have queried real live data; this is a governed simulation run for a product demo.${agent.id === "risk" ? " You MUST set riskFlag with exactly one realistic governance/compliance risk that would require human approval before anything ships externally." : " Leave riskFlag unset — that field is only for the Risk & Compliance Agent."} Call the submit_agent_step tool exactly once with your one finding.`;
+
+  const user = `${ctx.briefing}\n\n${priorContext}`;
+
+  const routed = ctx.autoRouteResult
+    ? { modelId: ctx.autoRouteResult.modelsByAgent[agent.id] || agent.model, substitution: null }
+    : resolveAgentModel(agent, ctx.agentModels[agent.id]);
+  if (routed.substitution) ctx.substitutions.push(routed.substitution);
+
+  const result = await callAgent({
+    apiKey: ctx.apiKey,
+    agentName: agent.name,
+    model: routed.modelId,
+    system,
+    user,
+    tool: isWriter ? FINAL_TOOL : STEP_TOOL,
+    maxTokens: isWriter ? 4096 : 1024,
+  });
+
+  ctx.totalInputTokens += result.usage?.input_tokens || 0;
+  ctx.totalOutputTokens += result.usage?.output_tokens || 0;
+  ctx.modelsUsed.add(result.model || agent.model);
+
+  await logCall(ctx.workspaceId, ctx.userId, agent.id, result.model || routed.modelId, result.usage);
+
+  if (isWriter) {
+    const out = result.input || {};
+    if (!out.title || !out.detail || !Array.isArray(out.findings) || !Array.isArray(out.recommendations) || !Array.isArray(out.riskFlags)) {
+      throw new Error("Executive Writer Agent: returned an incomplete result.");
+    }
+    ctx.steps.push({ agentId: agent.id, agentName: agent.name, title: out.title, detail: out.detail });
+    return {
+      kind: "final",
+      result: { executiveSummary: out.executiveSummary, steps: ctx.steps, findings: out.findings, recommendations: out.recommendations, riskFlags: out.riskFlags },
+    };
+  }
+
+  const out = result.input || {};
+  if (!out.title || !out.detail) {
+    throw new Error(`${agent.name}: returned an incomplete result.`);
+  }
+  ctx.steps.push({
+    agentId: agent.id,
+    agentName: agent.name,
+    title: out.title,
+    detail: out.detail,
+    ...(out.riskFlag && out.riskFlag.text ? { riskFlag: out.riskFlag } : {}),
+  });
+
+  if (agent.id === "risk" && out.riskFlag && out.riskFlag.text) {
+    const policy = await getCompliancePolicy(ctx.workspaceId);
+    if (shouldPauseForPolicy(policy, out.riskFlag)) {
+      const runState = {
+        objective: ctx.objective, departments: ctx.departments, sources: ctx.sources,
+        agentModels: ctx.agentModels, autoRoute: ctx.autoRoute,
+        steps: ctx.steps, totalInputTokens: ctx.totalInputTokens, totalOutputTokens: ctx.totalOutputTokens,
+        modelsUsed: Array.from(ctx.modelsUsed), substitutions: ctx.substitutions,
+      };
+      const approvalId = await createPendingApproval(ctx.workspaceId, out.riskFlag, runState);
+      return { kind: "paused", approvalId, riskFlag: out.riskFlag, policy: policy! };
+    }
+  }
+
+  return { kind: "continue" };
+}
+
+// Continues a run that previously paused for policy approval. A pause
+// only ever happens right after the Risk & Compliance Agent (index 3 of
+// AGENT_DEFS) — Research/Finance/Ops/Risk already ran — so exactly
+// Strategy and Writer remain; there's no arbitrary resume position to
+// track. Requires the approval to belong to the caller's own workspace
+// (the lookup below filters on it directly, since the service role key
+// bypasses RLS) and to be approved and not already resumed.
+async function handleResume(workspaceId: string, userId: string, approvalId: string, apiKey: string): Promise<Response> {
+  const resp = await serviceRoleFetch(
+    `approvals?workspace_id=eq.${workspaceId}&id=eq.${approvalId}&select=*`,
+  );
+  if (!resp.ok) return json({ error: "Failed to look up this approval." }, 500);
+  const rows = await resp.json();
+  const row = rows[0];
+  if (!row) return json({ error: "Approval not found in your workspace." }, 404);
+  if (row.status === "pending") {
+    return json({ error: "This run is still pending approval — nothing to resume yet." }, 409);
+  }
+  if (row.status === "rejected") {
+    return json({ rejected: true, error: "This run was rejected — no further Claude calls were made past the Risk & Compliance step." });
+  }
+  if (row.resumed_at) {
+    return json({ error: "This run has already been resumed." }, 409);
+  }
+
+  const rs = row.run_state;
+  if (!rs || !Array.isArray(rs.steps)) {
+    return json({ error: "This approval has no run to resume." }, 400);
+  }
+
+  const objective = String(rs.objective || "");
+  const departments: string[] = Array.isArray(rs.departments) ? rs.departments : [];
+  const sources: string[] = Array.isArray(rs.sources) ? rs.sources : [];
+  const agentModels = rs.agentModels && typeof rs.agentModels === "object" ? rs.agentModels : {};
+  const autoRoute = rs.autoRoute === true;
+  const briefing = `Business objective: ${objective}\nDepartments in scope: ${departments.join(", ") || "none specified"}\nData sources in scope: ${sources.join(", ") || "none specified"}`;
+
+  const ctx: RunCtx = {
+    apiKey, workspaceId, userId, objective, departments, sources, agentModels, autoRoute,
+    autoRouteResult: autoRoute ? computeAutoRoute(objective, departments, sources) : null,
+    briefing,
+    steps: rs.steps.slice(),
+    totalInputTokens: Number(rs.totalInputTokens) || 0,
+    totalOutputTokens: Number(rs.totalOutputTokens) || 0,
+    modelsUsed: new Set<string>(Array.isArray(rs.modelsUsed) ? rs.modelsUsed : []),
+    substitutions: Array.isArray(rs.substitutions) ? rs.substitutions.slice() : [],
+  };
+
+  try {
+    for (const agent of AGENT_DEFS.slice(4)) { // Strategy, Writer
+      const outcome = await runOneAgent(agent, ctx);
+      if (outcome.kind === "final") {
+        await serviceRoleFetch(`approvals?workspace_id=eq.${workspaceId}&id=eq.${approvalId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ resumed_at: new Date().toISOString() }),
+        });
+        await recordUsage(workspaceId, userId);
+        return json({
+          result: outcome.result,
+          model: Array.from(ctx.modelsUsed).join(" · "),
+          usage: { input_tokens: ctx.totalInputTokens, output_tokens: ctx.totalOutputTokens },
+          substitutions: ctx.substitutions,
+          routing: routingInfo(ctx),
+          resumedApprovalId: approvalId,
+        });
+      }
+      // The Strategy/Writer prompts never set riskFlag (only the Risk
+      // agent's does), so this can't recur here in practice — handled
+      // anyway so a second real gate would still work, not get lost.
+      if (outcome.kind === "paused") {
+        return json({ paused: true, approvalId: outcome.approvalId, steps: ctx.steps, riskFlag: outcome.riskFlag, routing: routingInfo(ctx) });
+      }
+    }
+    return json({ error: "Resumed orchestration ended without a final result." }, 502);
+  } catch (err) {
+    console.error("orchestrate: resume failed", err);
+    return json({ error: String(err instanceof Error ? err.message : err) }, 502);
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: CORS_HEADERS });
@@ -379,24 +643,11 @@ Deno.serve(async (req: Request) => {
     return json({ error: "Could not resolve your workspace. Try reloading the page and signing in again." }, 500);
   }
 
-  const rateLimitError = await checkRateLimit(workspaceId);
-  if (rateLimitError) {
-    return json({ error: rateLimitError.error }, rateLimitError.status);
-  }
-
-  let objective: string, departments: string[], sources: string[], agentModels: Record<string, unknown>, autoRoute: boolean;
+  let body: Record<string, unknown>;
   try {
-    const body = await req.json();
-    objective = body.objective;
-    departments = Array.isArray(body.departments) ? body.departments : [];
-    sources = Array.isArray(body.sources) ? body.sources : [];
-    agentModels = body.agentModels && typeof body.agentModels === "object" ? body.agentModels : {};
-    autoRoute = body.autoRoute === true;
+    body = await req.json();
   } catch {
     return json({ error: "Invalid JSON body." }, 400);
-  }
-  if (!objective || typeof objective !== "string") {
-    return json({ error: "`objective` (string) is required." }, 400);
   }
 
   const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
@@ -407,88 +658,65 @@ Deno.serve(async (req: Request) => {
     );
   }
 
+  // A resume request continues a previously paused run — it costs no
+  // fresh rate-limit unit (the run it's finishing already checked the
+  // cap before pausing) and needs none of the objective/departments/etc.
+  // fields below, since those live in the paused approval's run_state.
+  if (typeof body.resumeApprovalId === "string" && body.resumeApprovalId) {
+    return await handleResume(workspaceId, userId, body.resumeApprovalId, apiKey);
+  }
+
+  const rateLimitError = await checkRateLimit(workspaceId);
+  if (rateLimitError) {
+    return json({ error: rateLimitError.error }, rateLimitError.status);
+  }
+
+  const objective = body.objective;
+  const departments = Array.isArray(body.departments) ? body.departments as string[] : [];
+  const sources = Array.isArray(body.sources) ? body.sources as string[] : [];
+  const agentModels = body.agentModels && typeof body.agentModels === "object" ? body.agentModels as Record<string, unknown> : {};
+  const autoRoute = body.autoRoute === true;
+  if (!objective || typeof objective !== "string") {
+    return json({ error: "`objective` (string) is required." }, 400);
+  }
+
   const briefing = `Business objective: ${objective}\nDepartments in scope: ${departments.join(", ") || "none specified"}\nData sources in scope: ${sources.join(", ") || "none specified"}`;
 
-  const autoRouteResult = autoRoute ? computeAutoRoute(objective, departments, sources) : null;
-
-  const steps: Array<{ agentId: string; agentName: string; title: string; detail: string; riskFlag?: { severity: string; text: string } }> = [];
-  let totalInputTokens = 0;
-  let totalOutputTokens = 0;
-  const modelsUsed = new Set<string>();
-  const substitutions: Array<{ agentId: string; agentName: string; requested: string; used: string }> = [];
+  const ctx: RunCtx = {
+    apiKey, workspaceId, userId, objective, departments, sources, agentModels, autoRoute,
+    autoRouteResult: autoRoute ? computeAutoRoute(objective, departments, sources) : null,
+    briefing,
+    steps: [],
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    modelsUsed: new Set<string>(),
+    substitutions: [],
+  };
 
   try {
     for (const agent of AGENT_DEFS) {
-      const isWriter = agent.id === "writer";
-      const priorContext = steps.length
-        ? "Prior agents' findings so far, in order:\n" +
-          steps.map((s) => `- ${s.agentName}: ${s.title} — ${s.detail}`).join("\n")
-        : "You are the first agent in this run — no prior findings yet.";
-
-      const system = isWriter
-        ? `You are the Executive Writer Agent in the Aiven Orchestrator, a governed multi-agent enterprise workflow. Your role: ${agent.role}. You are the last agent in a real six-agent pipeline — draft the final executive-ready synthesis from everything the other five agents actually found. Do not claim to have queried real live data yourself; this is a governed simulation run for a product demo, but be concrete and specific, grounded in the prior agents' stated findings. Call the submit_final_result tool exactly once.`
-        : `You are the ${agent.name} in the Aiven Orchestrator, a governed multi-agent enterprise workflow. Your role: ${agent.role}. You are one agent in a real six-agent pipeline — see the prior agents' actual findings below and build on them where relevant (don't repeat what they already covered). Be concrete and specific — invent a plausible, clearly-illustrative finding, metric, or figure appropriate to the objective, as if you had actually queried the given data sources. Do not claim to have queried real live data; this is a governed simulation run for a product demo.${agent.id === "risk" ? " You MUST set riskFlag with exactly one realistic governance/compliance risk that would require human approval before anything ships externally." : " Leave riskFlag unset — that field is only for the Risk & Compliance Agent."} Call the submit_agent_step tool exactly once with your one finding.`;
-
-      const user = `${briefing}\n\n${priorContext}`;
-
-      const routed = autoRouteResult
-        ? { modelId: autoRouteResult.modelsByAgent[agent.id] || agent.model, substitution: null }
-        : resolveAgentModel(agent, agentModels[agent.id]);
-      if (routed.substitution) substitutions.push(routed.substitution);
-
-      const result = await callAgent({
-        apiKey,
-        agentName: agent.name,
-        model: routed.modelId,
-        system,
-        user,
-        tool: isWriter ? FINAL_TOOL : STEP_TOOL,
-        maxTokens: isWriter ? 4096 : 1024,
-      });
-
-      totalInputTokens += result.usage?.input_tokens || 0;
-      totalOutputTokens += result.usage?.output_tokens || 0;
-      modelsUsed.add(result.model || agent.model);
-
-      await logCall(workspaceId, userId, agent.id, result.model || routed.modelId, result.usage);
-
-      if (isWriter) {
-        const out = result.input || {};
-        if (!out.title || !out.detail || !Array.isArray(out.findings) || !Array.isArray(out.recommendations) || !Array.isArray(out.riskFlags)) {
-          throw new Error("Executive Writer Agent: returned an incomplete result.");
-        }
-        steps.push({ agentId: agent.id, agentName: agent.name, title: out.title, detail: out.detail });
-
-        await recordUsage(workspaceId, userId);
-
+      const outcome = await runOneAgent(agent, ctx);
+      if (outcome.kind === "paused") {
         return json({
-          result: {
-            executiveSummary: out.executiveSummary,
-            steps,
-            findings: out.findings,
-            recommendations: out.recommendations,
-            riskFlags: out.riskFlags,
-          },
-          model: Array.from(modelsUsed).join(" · "),
-          usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens },
-          substitutions,
-          routing: autoRouteResult
-            ? { mode: "auto", tier: autoRouteResult.tier, matchedKeywords: autoRouteResult.matchedKeywords, complexityScore: autoRouteResult.complexityScore }
-            : { mode: "manual" },
+          paused: true,
+          approvalId: outcome.approvalId,
+          steps: ctx.steps,
+          riskFlag: outcome.riskFlag,
+          policy: { autonomy: outcome.policy.autonomy, riskThreshold: outcome.policy.risk_threshold },
+          routing: routingInfo(ctx),
         });
       }
-
-      const out = result.input || {};
-      if (!out.title || !out.detail) {
-        throw new Error(`${agent.name}: returned an incomplete result.`);
+      if (outcome.kind === "final") {
+        await recordUsage(workspaceId, userId);
+        return json({
+          result: outcome.result,
+          model: Array.from(ctx.modelsUsed).join(" · "),
+          usage: { input_tokens: ctx.totalInputTokens, output_tokens: ctx.totalOutputTokens },
+          substitutions: ctx.substitutions,
+          routing: routingInfo(ctx),
+        });
       }
-      steps.push({
-        agentId: agent.id,
-        agentName: agent.name,
-        title: out.title,
-        detail: out.detail,
-        ...(out.riskFlag && out.riskFlag.text ? { riskFlag: out.riskFlag } : {}),
-      });
+      // "continue" — fall through to the next agent
     }
     // Unreachable — the loop always returns on the writer step — but
     // TypeScript wants every path to produce a Response.
