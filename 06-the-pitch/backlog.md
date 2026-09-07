@@ -23,7 +23,7 @@ Input to the Horizon mapping in `roadmap.md`. Constructed from `feature-ideas.md
 | Cost-based *automatic* model routing (platform chooses model by task risk/complexity) | Epic | P1 | Done (prototype) — a real, deterministic three-tier cascade (risk keywords + scope size) picks each agent's model when the Command Center's Auto-route toggle is on, escalating to Opus 4.8 only where warranted; a trained/scored risk model and true multi-provider routing still open | The Margin | cost, routing |
 | Integrations catalog (NetSuite/Salesforce/Zendesk/Snowflake/Workday) | Epic | P1 | Backlog | The Bet | integration |
 | Org-wide model spend dashboard | Story | P2 | Done (prototype) — `spend.html` built at prototype fidelity; now also shows real, measured Orchestrate spend (real model + token usage per call, priced at real Anthropic rates), not just the modeled Leader/Filler/Killer cost-curve numbers | The Margin | analytics, cost |
-| Policy editor for compliance owners | Story | P2 | Backlog | The Guardrails | governance, ux |
+| Policy editor for compliance owners | Story | P2 | Done (prototype) — `policies.html` built at prototype fidelity; its Core-tier policy now really gates the Orchestrate pipeline (Approval-required/Two-gate genuinely pauses a run until a human decides), not just a UI-only editor with no consumer | The Guardrails | governance, ux |
 | Slack/Teams-native approval actions | Story | P1 | Backlog | The Guardrails | integration, hitl |
 | Expand into a second department vertical | Epic | P3 | Backlog | The Bet | expansion, gtm |
 | Per-department drill-down analytics | Story | P2 | Backlog | The Bet | ux, analytics |

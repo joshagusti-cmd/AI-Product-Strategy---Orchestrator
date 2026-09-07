@@ -147,6 +147,37 @@
           Aiven.toast("Request " + a.status + " — recorded to audit trail");
           renderKpis();
           renderTable();
+
+          // This approval paused a real Orchestrate run (the Policy
+          // Editor's Core-tier gate — see supabase/functions/orchestrate)
+          // rather than being a plain governance request — so deciding it
+          // here has a real, further effect: approving actually resumes
+          // the run (Strategy + Writer, real Claude calls) to produce the
+          // executive deliverable; rejecting genuinely ends it, no
+          // deliverable ever generated.
+          if (a.hasRunState && !a.resumed) {
+            if (decision === "approved") {
+              Aiven.toast("Resuming the paused run — real Claude calls in progress…");
+              try {
+                var res = await Aiven.resumeOrchestrate(a.id);
+                a.resumed = true;
+                if (res.rejected) {
+                  Aiven.toast(res.error);
+                } else {
+                  Aiven.toast("Run resumed — executive deliverable generated. See the workspace's Audit Trail.");
+                  await Aiven.addAudit({ actor: "Orchestrator Core", model: res.model, risk: "—",
+                    action: "Resumed paused run and generated executive deliverable: " + a.title,
+                    detail: "Strategy + Writer calls completed after approval via the Approval Queue." });
+                }
+              } catch (e) {
+                Aiven.toast("Approved, but couldn't resume the run: " + e.message);
+              }
+            } else {
+              await Aiven.addAudit({ actor: "Orchestrator Core", model: "—", risk: a.risk,
+                action: "Run terminated by rejection: " + a.title,
+                detail: "No further Claude calls were made — Strategy and Writer never ran." });
+            }
+          }
         } catch (e) {
           Aiven.toast("Couldn't record decision: " + e.message);
           renderTable();

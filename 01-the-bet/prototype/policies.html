@@ -15,6 +15,7 @@
   .threshold-val { font-family: var(--mono); font-size: 13px; width: 42px; text-align: right; flex-shrink: 0; }
   .policy-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .policy-foot .updated { font-family: var(--mono); font-size: 10.5px; color: var(--text-mute); }
+  .enforced-badge { font-family: var(--mono); font-size: 10.5px; color: var(--accent); margin-left: 6px; cursor: help; }
   @media (max-width: 980px) { .kpi-strip { grid-template-columns: repeat(1, 1fr); } .policy-grid { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -92,8 +93,11 @@
     var canEdit = Aiven.auth.isComplianceOwner();
     var dis = canEdit ? "" : " disabled";
     grid.innerHTML = state.policies.map(function (p) {
+      var isEnforced = p.id === "compliance";
       return "<div class='panel policy-card' data-id='" + p.id + "'>" +
-        "<div class='panel-head'><div><h2>" + p.label + "</h2><div class='hint'>Tier: <span class='tier-pill " + p.tier + "' style='margin-left:4px;'>" + p.tier + "</span></div></div></div>" +
+        "<div class='panel-head'><div><h2>" + p.label + "</h2><div class='hint'>Tier: <span class='tier-pill " + p.tier + "' style='margin-left:4px;'>" + p.tier + "</span>" +
+        (isEnforced ? " <span class='enforced-badge' title=\"The Command Center's six real agents are all Core tier — this policy is the one the real Orchestrate pipeline actually checks.\">● Enforced on real Orchestrate runs</span>" : "") +
+        "</div></div></div>" +
         "<div class='panel-body'>" +
         "<div class='field'><span class='field-label'>Autonomy level</span>" +
         "<select class='control autonomy-select'" + dis + ">" +
@@ -102,7 +106,9 @@
         "<div class='field'><span class='field-label'>Escalation risk threshold</span>" +
         "<div class='threshold-row'><input type='range' class='control threshold-range' min='0' max='100' value='" + p.riskThreshold + "'" + dis + ">" +
         "<span class='threshold-val tabular'>" + p.riskThreshold + "</span></div>" +
-        "<div class='field-hint'>A score at or above this crosses into escalation for this tier.</div></div>" +
+        "<div class='field-hint'>A score at or above this crosses into escalation for this tier." +
+        (isEnforced ? " On this policy specifically: with Autonomy set to Approval-required or Two-gate, a real Orchestrate run's Risk &amp; Compliance flag at or above this threshold actually pauses the run — Strategy and Writer don't run until a human decides. Autonomous/Advisory never pause it." : "") +
+        "</div></div>" +
         "<div class='field'><span class='field-label'>Escalation rule</span>" +
         "<textarea class='control escalation-text' rows='3'" + dis + ">" + p.escalation + "</textarea></div>" +
         "<div class='policy-foot'><span class='updated mono'>Last updated " + p.updatedAt + "</span>" +
