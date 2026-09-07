@@ -132,7 +132,7 @@
         "<td class='name'>" + a.name + "<div class='cap-line can'>" + a.can + "</div><div class='cap-line cannot'>" + a.cannot + "</div></td>" +
         "<td>" + a.dept + "</td>" +
         "<td><span class='tier-pill " + a.tier + "'>" + a.tier + "</span></td>" +
-        "<td><select class='control model-col model-select' data-id='" + a.id + "'>" +
+        "<td><select class='control model-col model-select' data-id='" + a.id + "'" + (Aiven.auth.isAdmin() ? "" : " disabled title='Only workspace admins can reassign a model'") + ">" +
         MODELS.map(function (m) { return "<option" + (m === a.model ? " selected" : "") + ">" + m + "</option>"; }).join("") +
         "</select></td>" +
         "<td><span class='status-pill " + a.status + "'><span class='dot'></span>" + a.status + "</span></td>" +
