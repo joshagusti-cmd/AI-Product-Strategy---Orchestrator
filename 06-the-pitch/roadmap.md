@@ -9,7 +9,7 @@
 
 | Initiative | Metric | Confidence |
 |-----------|--------|-----------|
-| ~~Move off the prototype: real model API calls + a persistent backend~~ — **built**: a real Supabase Postgres backend and a real Claude-backed orchestration call now run in `01-the-bet/prototype/` (see `01-the-bet/prototype.md`). Still open: piloting it with 1–2 design-partner fraud desks running the Leader + Filler flow specifically — this is a GTM step, not an engineering one | ≥92% score accuracy in production, matching the Reliability Contract target (`04-the-contract/golden-dataset.md`) — not yet measured against a real pilot | H |
+| ~~Move off the prototype: real model API calls + a persistent backend~~ — **built**: a real Supabase Postgres backend and a real, six-call independent-per-agent Claude orchestration pipeline (not one call inventing all six agents' output) now run in `01-the-bet/prototype/` (see `01-the-bet/prototype.md`). Still open: piloting it with 1–2 design-partner fraud desks running the Leader + Filler flow specifically — this is a GTM step, not an engineering one | ≥92% score accuracy in production, matching the Reliability Contract target (`04-the-contract/golden-dataset.md`) — not yet measured against a real pilot | H |
 | Close the Network Intelligence feedback loop, and fix the Domain Context Loop scoring inconsistency while we're in that file | Loop status flips missing → active; Total Flywheel Score corrected and rising from 18/20 | M |
 | Move kill-switch readiness from architecture to a verified drill | Confirmed <48h secondary-provider swap under real load, not just on paper | H |
 | Validate the pricing model in real buyer conversations | Signed design-partner agreement at or near the $101.50/user/month modeled price | M |

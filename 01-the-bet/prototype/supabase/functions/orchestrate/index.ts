@@ -1,19 +1,31 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 // Aiven Orchestrator — real-model orchestration endpoint (Horizon 1 + 2).
-// Makes one real Anthropic API call (forced tool-use for structured
-// output) that simulates a realistic pass by each of the six Command
-// Center agents, then returns the structured result for the frontend to
-// render into the existing timeline/deliverable UI. This is one real
-// call producing per-agent structured output, not six independent calls
-// — documented as such rather than overclaimed.
+// Makes six real, independent Anthropic API calls — one per Command
+// Center agent, run in the same order the UI narrates (Research →
+// Finance → Ops → Risk & Compliance → Strategy → Executive Writer) —
+// each agent seeing the prior agents' actual output as context, not a
+// single call asked to invent all six steps at once. The final call
+// (the Writer) also synthesizes the run's executive summary, findings,
+// recommendations, and risk flags from everything before it.
+//
+// Model per agent is fixed server-side (see AGENT_DEFS below), not
+// driven by the Command Center's per-agent model dropdown yet — wiring
+// that selector to real per-call routing is the still-open "cost-based
+// automatic model routing" backlog item. Two agents (Finance, Strategy)
+// are labeled "GPT-4o" elsewhere in the product's original illustrative
+// design; since only an Anthropic key is configured, they run on Claude
+// Sonnet 5 here — the Command Center's local agent labels were updated
+// to match so the UI never claims a provider it isn't actually calling.
 //
 // Also enforces a per-workspace rolling 24h spend cap (each workspace's
 // `daily_orchestrate_limit`, default 20) using the service role key —
 // SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are auto-injected into every
 // Edge Function by Supabase, no manual secret needed for this part. The
 // cap is looked up and logged server-side so a client can't raise its
-// own limit or erase its own usage history to dodge it.
+// own limit or erase its own usage history to dodge it. One Orchestrate
+// run still only costs one unit of quota, even though it's now six API
+// calls under the hood.
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -21,36 +33,55 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const ORCHESTRATE_TOOL = {
-  name: "submit_orchestration_result",
-  description: "Return the structured result of orchestrating this business objective across the agent team.",
+// The six Command Center agents, in execution order. `model` is a real
+// Anthropic model id — Opus 4.8 for the highest-stakes step (governance
+// risk screening), Sonnet 5 for everything else.
+const AGENT_DEFS = [
+  { id: "research", name: "Research & Data Agent", model: "claude-sonnet-5", role: "pulls and reconciles data across connected systems" },
+  { id: "finance", name: "Finance Agent", model: "claude-sonnet-5", role: "analyzes cost structure, margin, and variance" },
+  { id: "ops", name: "Operations Agent", model: "claude-sonnet-5", role: "maps process cycle times and bottlenecks" },
+  { id: "risk", name: "Risk & Compliance Agent", model: "claude-opus-4-8", role: "screens findings against governance policy; must flag exactly one realistic governance/compliance risk that would require human approval before anything ships externally" },
+  { id: "strategy", name: "Strategy Agent", model: "claude-sonnet-5", role: "synthesizes findings into prioritized recommendations" },
+  { id: "writer", name: "Executive Writer Agent", model: "claude-sonnet-5", role: "drafts the final executive-ready action plan" },
+] as const;
+
+// Tool schema for the five non-writer agents — just this agent's own
+// step. `riskFlag` is only ever populated by the risk agent (enforced
+// by that agent's prompt, not by the schema, so the same tool works for
+// all five).
+const STEP_TOOL = {
+  name: "submit_agent_step",
+  description: "Return this agent's single finding for the run.",
   input_schema: {
     type: "object",
     properties: {
-      executiveSummary: { type: "string", description: "2-4 sentence executive summary of the whole run." },
-      steps: {
-        type: "array",
-        description: "One entry per agent, in execution order.",
-        items: {
-          type: "object",
-          properties: {
-            agentId: { type: "string", enum: ["research", "finance", "ops", "risk", "strategy", "writer"] },
-            agentName: { type: "string" },
-            title: { type: "string", description: "Short present-tense action, e.g. 'Analyze margin trends'" },
-            detail: { type: "string", description: "1-2 sentence specific, concrete finding from this agent." },
-            riskFlag: {
-              type: "object",
-              description: "Only present on the risk agent's step — the one governance flag requiring human approval.",
-              properties: {
-                severity: { type: "string", enum: ["Low", "Medium", "High"] },
-                text: { type: "string" },
-              },
-            },
-          },
-          required: ["agentId", "agentName", "title", "detail"],
+      title: { type: "string", description: "Short present-tense action, e.g. 'Analyze margin trends'" },
+      detail: { type: "string", description: "1-2 sentence specific, concrete finding from this agent." },
+      riskFlag: {
+        type: "object",
+        description: "Only the Risk & Compliance Agent sets this — the one governance flag requiring human approval before anything ships externally. Every other agent omits it.",
+        properties: {
+          severity: { type: "string", enum: ["Low", "Medium", "High"] },
+          text: { type: "string" },
         },
       },
-      findings: { type: "array", items: { type: "string" }, description: "3-5 specific findings across the run." },
+    },
+    required: ["title", "detail"],
+  },
+};
+
+// Tool schema for the final (writer) call — its own step, plus the
+// synthesized result for the whole run.
+const FINAL_TOOL = {
+  name: "submit_final_result",
+  description: "Return the Executive Writer Agent's own step, plus the synthesized executive result for the whole run.",
+  input_schema: {
+    type: "object",
+    properties: {
+      title: { type: "string", description: "Short present-tense action for the writer's own step." },
+      detail: { type: "string", description: "1-2 sentences describing the writer's own contribution." },
+      executiveSummary: { type: "string", description: "2-4 sentence executive summary of the whole run." },
+      findings: { type: "array", items: { type: "string" }, description: "3-5 specific findings drawn from the prior agents' steps." },
       recommendations: {
         type: "array",
         description: "2-4 prioritized recommendations.",
@@ -65,9 +96,9 @@ const ORCHESTRATE_TOOL = {
           required: ["text", "owner", "nextStep", "priority"],
         },
       },
-      riskFlags: { type: "array", items: { type: "string" }, description: "1-2 governance risk flags in plain language." },
+      riskFlags: { type: "array", items: { type: "string" }, description: "1-2 governance risk flags in plain language, drawn from the risk agent's step." },
     },
-    required: ["executiveSummary", "steps", "findings", "recommendations", "riskFlags"],
+    required: ["title", "detail", "executiveSummary", "findings", "recommendations", "riskFlags"],
   },
 };
 
@@ -169,6 +200,60 @@ async function recordUsage(workspaceId: string, userId: string) {
   });
 }
 
+// One real Anthropic call for one agent's turn. Throws a descriptive
+// error (naming the agent) on any failure so the caller can abort the
+// whole run cleanly instead of returning a partial result.
+async function callAgent(opts: {
+  apiKey: string;
+  agentName: string;
+  model: string;
+  system: string;
+  user: string;
+  tool: typeof STEP_TOOL | typeof FINAL_TOOL;
+  maxTokens: number;
+}) {
+  let resp: Response;
+  try {
+    resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": opts.apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: opts.model,
+        max_tokens: opts.maxTokens,
+        system: opts.system,
+        messages: [{ role: "user", content: opts.user }],
+        tools: [opts.tool],
+        tool_choice: { type: "tool", name: opts.tool.name },
+      }),
+    });
+  } catch (err) {
+    throw new Error(`${opts.agentName}: failed to reach Anthropic API: ${String(err)}`);
+  }
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    console.error(`orchestrate: ${opts.agentName} API error`, resp.status, text);
+    throw new Error(`${opts.agentName}: Anthropic API error (${resp.status})`);
+  }
+
+  const data = await resp.json();
+  if (data.stop_reason === "max_tokens") {
+    throw new Error(`${opts.agentName}: response was cut off by the token limit. Try a shorter or more specific objective.`);
+  }
+
+  const toolUse = (data.content || []).find((b: { type: string }) => b.type === "tool_use");
+  if (!toolUse) {
+    console.error(`orchestrate: ${opts.agentName} returned no tool_use block`, JSON.stringify(data.content));
+    throw new Error(`${opts.agentName}: did not return a structured result.`);
+  }
+
+  return { input: toolUse.input, usage: data.usage, model: data.model as string };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: CORS_HEADERS });
@@ -180,7 +265,7 @@ Deno.serve(async (req: Request) => {
   const { role, sub: userId } = getJwtClaims(req.headers.get("authorization"));
   if (role !== "authenticated" || !userId) {
     return json(
-      { error: "Sign in to orchestrate — this triggers a real, metered Claude API call and is limited to signed-in workspaces. The public demo data is view-only." },
+      { error: "Sign in to orchestrate — this triggers real, metered Claude API calls and is limited to signed-in workspaces. The public demo data is view-only." },
       401,
     );
   }
@@ -216,66 +301,80 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  const systemPrompt = `You are the Aiven Orchestrator, coordinating six specialized enterprise agents to analyze a business objective and produce a governed executive action plan:
-- Research & Data Agent — pulls and reconciles data across connected systems
-- Finance Agent — analyzes cost structure, margin, and variance
-- Operations Agent — maps process cycle times and bottlenecks
-- Risk & Compliance Agent — screens findings against governance policy; must flag exactly one realistic governance/compliance risk that would require human approval before anything ships externally
-- Strategy Agent — synthesizes findings into prioritized recommendations
-- Executive Writer Agent — drafts the final executive-ready action plan
+  const briefing = `Business objective: ${objective}\nDepartments in scope: ${departments.join(", ") || "none specified"}\nData sources in scope: ${sources.join(", ") || "none specified"}`;
 
-Given the objective, the departments in scope, and the data sources in scope, simulate a realistic, specific, and plausible pass by each of these six agents in order, as if they had actually queried the given data sources. Be concrete — invent plausible, clearly-illustrative findings, metrics, and figures appropriate to the objective. Do not claim to have queried real live data; this is a governed simulation run for a product demo. Call the submit_orchestration_result tool exactly once with the complete structured result — one step per agent, in the order listed above.`;
+  const steps: Array<{ agentId: string; agentName: string; title: string; detail: string; riskFlag?: { severity: string; text: string } }> = [];
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  const modelsUsed = new Set<string>();
 
-  const userPrompt = `Business objective: ${objective}\nDepartments in scope: ${departments.join(", ") || "none specified"}\nData sources in scope: ${sources.join(", ") || "none specified"}`;
-
-  let anthropicResp: Response;
   try {
-    anthropicResp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-5",
-        max_tokens: 8192,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userPrompt }],
-        tools: [ORCHESTRATE_TOOL],
-        tool_choice: { type: "tool", name: ORCHESTRATE_TOOL.name },
-      }),
-    });
+    for (const agent of AGENT_DEFS) {
+      const isWriter = agent.id === "writer";
+      const priorContext = steps.length
+        ? "Prior agents' findings so far, in order:\n" +
+          steps.map((s) => `- ${s.agentName}: ${s.title} — ${s.detail}`).join("\n")
+        : "You are the first agent in this run — no prior findings yet.";
+
+      const system = isWriter
+        ? `You are the Executive Writer Agent in the Aiven Orchestrator, a governed multi-agent enterprise workflow. Your role: ${agent.role}. You are the last agent in a real six-agent pipeline — draft the final executive-ready synthesis from everything the other five agents actually found. Do not claim to have queried real live data yourself; this is a governed simulation run for a product demo, but be concrete and specific, grounded in the prior agents' stated findings. Call the submit_final_result tool exactly once.`
+        : `You are the ${agent.name} in the Aiven Orchestrator, a governed multi-agent enterprise workflow. Your role: ${agent.role}. You are one agent in a real six-agent pipeline — see the prior agents' actual findings below and build on them where relevant (don't repeat what they already covered). Be concrete and specific — invent a plausible, clearly-illustrative finding, metric, or figure appropriate to the objective, as if you had actually queried the given data sources. Do not claim to have queried real live data; this is a governed simulation run for a product demo.${agent.id === "risk" ? " You MUST set riskFlag with exactly one realistic governance/compliance risk that would require human approval before anything ships externally." : " Leave riskFlag unset — that field is only for the Risk & Compliance Agent."} Call the submit_agent_step tool exactly once with your one finding.`;
+
+      const user = `${briefing}\n\n${priorContext}`;
+
+      const result = await callAgent({
+        apiKey,
+        agentName: agent.name,
+        model: agent.model,
+        system,
+        user,
+        tool: isWriter ? FINAL_TOOL : STEP_TOOL,
+        maxTokens: isWriter ? 4096 : 1024,
+      });
+
+      totalInputTokens += result.usage?.input_tokens || 0;
+      totalOutputTokens += result.usage?.output_tokens || 0;
+      modelsUsed.add(result.model || agent.model);
+
+      if (isWriter) {
+        const out = result.input || {};
+        if (!out.title || !out.detail || !Array.isArray(out.findings) || !Array.isArray(out.recommendations) || !Array.isArray(out.riskFlags)) {
+          throw new Error("Executive Writer Agent: returned an incomplete result.");
+        }
+        steps.push({ agentId: agent.id, agentName: agent.name, title: out.title, detail: out.detail });
+
+        await recordUsage(workspaceId, userId);
+
+        return json({
+          result: {
+            executiveSummary: out.executiveSummary,
+            steps,
+            findings: out.findings,
+            recommendations: out.recommendations,
+            riskFlags: out.riskFlags,
+          },
+          model: Array.from(modelsUsed).join(" · "),
+          usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens },
+        });
+      }
+
+      const out = result.input || {};
+      if (!out.title || !out.detail) {
+        throw new Error(`${agent.name}: returned an incomplete result.`);
+      }
+      steps.push({
+        agentId: agent.id,
+        agentName: agent.name,
+        title: out.title,
+        detail: out.detail,
+        ...(out.riskFlag && out.riskFlag.text ? { riskFlag: out.riskFlag } : {}),
+      });
+    }
+    // Unreachable — the loop always returns on the writer step — but
+    // TypeScript wants every path to produce a Response.
+    return json({ error: "Orchestration ended without a final result." }, 502);
   } catch (err) {
-    return json({ error: `Failed to reach Anthropic API: ${String(err)}` }, 502);
+    console.error("orchestrate: pipeline failed", err);
+    return json({ error: String(err instanceof Error ? err.message : err) }, 502);
   }
-
-  if (!anthropicResp.ok) {
-    const text = await anthropicResp.text();
-    console.error("Anthropic API error", anthropicResp.status, text);
-    return json({ error: `Anthropic API error (${anthropicResp.status}): ${text}` }, 502);
-  }
-
-  const data = await anthropicResp.json();
-  console.log("orchestrate: stop_reason=", data.stop_reason, "usage=", JSON.stringify(data.usage));
-
-  if (data.stop_reason === "max_tokens") {
-    return json({ error: "The model's response was cut off by the token limit before it finished. Try a shorter or more specific objective, or fewer departments/data sources." }, 502);
-  }
-
-  const toolUse = (data.content || []).find((b: { type: string }) => b.type === "tool_use");
-  if (!toolUse) {
-    console.error("orchestrate: no tool_use block in response", JSON.stringify(data.content));
-    return json({ error: "Model did not return a structured result (no tool_use block)." }, 502);
-  }
-
-  const steps = toolUse.input && toolUse.input.steps;
-  if (!Array.isArray(steps) || steps.length === 0) {
-    console.error("orchestrate: tool_use.input had no steps", JSON.stringify(toolUse.input));
-    return json({ error: "Model returned a result with no agent steps. This usually means the response was too constrained — try again." }, 502);
-  }
-
-  await recordUsage(workspaceId, userId);
-
-  return json({ result: toolUse.input, model: data.model, usage: data.usage });
 });

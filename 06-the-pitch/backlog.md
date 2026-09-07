@@ -19,6 +19,7 @@ Input to the Horizon mapping in `roadmap.md`. Constructed from `feature-ideas.md
 | Run a real red-team session with a partner | Task | P0 | Backlog | The Contract | reliability, research |
 | Real auth + multi-tenancy (SSO/RBAC) | Epic | P1 | Done (prototype) — magic-link auth + per-user isolated workspace shipped; SSO, teams/invites, RBAC still open | The Guardrails | platform, security |
 | Per-workspace spend caps / rate limiting on real model calls | Story | P1 | Done (prototype) — rolling-24h Orchestrate cap enforced server-side per workspace; plan-tied limits and an admin UI to change one still open | The Guardrails | platform, security, cost |
+| True multi-agent orchestration (independent calls per agent, not one call for all six) | Epic | P1 | Done (prototype) — six real, independent, sequential Claude calls with real per-agent context handoff; multi-provider routing and wiring the UI's model dropdown to real per-call routing still open | The Contract | platform, core |
 | Cost-based automatic model routing | Epic | P1 | Backlog | The Margin | cost, routing |
 | Integrations catalog (NetSuite/Salesforce/Zendesk/Snowflake/Workday) | Epic | P1 | Backlog | The Bet | integration |
 | Org-wide model spend dashboard | Story | P2 | Backlog | The Margin | analytics, cost |

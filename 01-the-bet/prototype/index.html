@@ -526,10 +526,10 @@
   function refreshUsageHint(user) {
     var hint = document.getElementById("console-hint");
     if (!user) {
-      hint.textContent = "Viewing the read-only public demo — sign in above to run a real Claude orchestration.";
+      hint.textContent = "Viewing the read-only public demo — sign in above to run a real 6-agent Claude orchestration.";
       return;
     }
-    hint.textContent = "Signed in — Orchestrate runs a real Claude call against your workspace.";
+    hint.textContent = "Signed in — Orchestrate runs 6 real, independent Claude calls against your workspace.";
     Aiven.getUsage().then(function (usage) {
       if (usage) hint.textContent += " (" + usage.used + "/" + usage.limit + " runs used today)";
     }).catch(function () { /* non-critical — leave the hint as-is */ });
@@ -569,12 +569,22 @@
 
   /* ---------------- agents / model governance ---------------- */
   var MODELS = ["Claude Sonnet 5", "Claude Opus 4.8", "GPT-4o", "Gemini 1.5 Pro"];
+  // Model labels here match what the orchestrate Edge Function actually
+  // calls per agent (see supabase/functions/orchestrate/index.ts —
+  // AGENT_DEFS) now that Orchestrate is six real, independent calls
+  // instead of one. Finance and Strategy were originally labeled
+  // "GPT-4o" as an illustrative multi-provider mix; since only an
+  // Anthropic key is configured, they really run on Claude Sonnet 5 —
+  // updated here so the label never claims a provider that isn't
+  // actually being called. True multi-provider routing (and wiring this
+  // dropdown to real per-call routing) is still open — see
+  // feature-ideas.md.
   var AGENTS = [
     { id: "research", name: "Research & Data Agent", model: "Claude Sonnet 5", role: "Pulls and reconciles data across connected systems", x: 0.18, y: 0.28 },
-    { id: "finance", name: "Finance Agent", model: "GPT-4o", role: "Analyzes cost structure, margin, and variance", x: 0.18, y: 0.74 },
+    { id: "finance", name: "Finance Agent", model: "Claude Sonnet 5", role: "Analyzes cost structure, margin, and variance", x: 0.18, y: 0.74 },
     { id: "ops", name: "Operations Agent", model: "Claude Sonnet 5", role: "Maps process cycle times and bottlenecks", x: 0.5, y: 0.88 },
     { id: "risk", name: "Risk & Compliance Agent", model: "Claude Opus 4.8", role: "Screens findings against governance policy", x: 0.82, y: 0.74 },
-    { id: "strategy", name: "Strategy Agent", model: "GPT-4o", role: "Synthesizes findings into prioritized recommendations", x: 0.82, y: 0.28 },
+    { id: "strategy", name: "Strategy Agent", model: "Claude Sonnet 5", role: "Synthesizes findings into prioritized recommendations", x: 0.82, y: 0.28 },
     { id: "writer", name: "Executive Writer Agent", model: "Claude Sonnet 5", role: "Drafts the executive-ready action plan", x: 0.5, y: 0.12 }
   ];
   var HUB = { x: 0.5, y: 0.5 };
@@ -904,7 +914,7 @@
     loadingEl.innerHTML =
       "<div class='step-marker'><div class='step-dot'></div></div>" +
       "<div class='step-body'><div class='step-top'><span class='step-title'>Calling Claude to orchestrate this objective…</span><span class='step-tag'>running</span></div>" +
-      "<div class='step-meta'>Orchestrator Core</div><div class='step-detail'>Real model call in progress — this can take 10–30 seconds.</div></div>";
+      "<div class='step-meta'>Orchestrator Core</div><div class='step-detail'>Six real, independent Claude calls running in sequence — this can take 30–60 seconds.</div></div>";
     tl.appendChild(loadingEl);
 
     var objective = document.getElementById("objective").value;
@@ -1018,7 +1028,7 @@
       var dw = document.getElementById("deliverable-wrap");
       dw.classList.add("show");
       dw.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
-      toast("Executive Action Plan ready — routed for review (real Claude call · " + (response.model || "model unknown") + ")");
+      toast("Executive Action Plan ready — routed for review (6 real Claude calls · " + (response.model || "model unknown") + ")");
 
       Aiven.addAudit({
         actor: "Executive Writer Agent", model: response.model || AGENTS[5].model, risk: "—",
