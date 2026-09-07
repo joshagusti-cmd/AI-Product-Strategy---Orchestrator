@@ -18,6 +18,8 @@
   .bar-row .bar.filler i { background: var(--running); }
   .bar-row .bar.killer i { background: var(--critical); }
   .bar-row .pct { font-family: var(--mono); font-size: 11px; width: 40px; text-align: right; flex-shrink: 0; }
+  .real-empty { padding: 24px 18px; font-size: 13px; color: var(--text-mute); }
+  .real-empty a { color: var(--accent); }
   @media (max-width: 980px) { .kpi-strip { grid-template-columns: repeat(2, 1fr); } .grid-two { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -73,6 +75,38 @@
     <div class="panel">
       <div class="panel-head"><div><h2>Cost by model provider</h2><div class="hint">Derived live from the Agent Registry's current model assignments.</div></div></div>
       <div class="panel-body tight" id="provider-bars"></div>
+    </div>
+  </section>
+
+  <section class="panel" style="margin-top:18px;" id="real-spend-section">
+    <div class="panel-head"><div><h2>Real Orchestrate spend</h2><div class="hint">Measured, not modeled — every real Claude API call your workspace's Command Center has actually made, priced at real per-model Anthropic rates.</div></div></div>
+    <div id="real-spend-body">
+      <section class="kpi-strip" aria-label="Real spend metrics" style="border-top:none;">
+        <div class="kpi"><div class="eyebrow">Real spend to date</div><div class="val tabular" id="real-total-cost">$0.00</div><div class="delta">this workspace, all-time</div></div>
+        <div class="kpi"><div class="eyebrow">Orchestrate runs</div><div class="val tabular" id="real-run-count">0</div><div class="delta">6 agent calls each</div></div>
+        <div class="kpi"><div class="eyebrow">Agent calls logged</div><div class="val tabular" id="real-call-count">0</div><div class="delta">individual model calls</div></div>
+        <div class="kpi"><div class="eyebrow">Tokens processed</div><div class="val tabular" id="real-token-count">0</div><div class="delta">input + output</div></div>
+      </section>
+      <div class="grid-two">
+        <div class="panel" style="border:none; box-shadow:none;">
+          <div class="panel-head"><div><h2 style="font-size:13px;">By model</h2></div></div>
+          <div class="panel-body tight scroll-x">
+            <table class="data">
+              <thead><tr><th>Model</th><th>Calls</th><th>Input tok</th><th>Output tok</th><th>Real cost</th></tr></thead>
+              <tbody id="real-model-rows"><tr><td colspan="5">—</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel" style="border:none; box-shadow:none;">
+          <div class="panel-head"><div><h2 style="font-size:13px;">By agent</h2></div></div>
+          <div class="panel-body tight scroll-x">
+            <table class="data">
+              <thead><tr><th>Agent</th><th>Calls</th><th>Input tok</th><th>Output tok</th><th>Real cost</th></tr></thead>
+              <tbody id="real-agent-rows"><tr><td colspan="5">—</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -145,12 +179,83 @@
     }).join("");
   }
 
+  // Real Anthropic per-model pricing, $ / million tokens (input, output).
+  // Source: the current published Claude API price list. Anything not
+  // in this table (shouldn't happen — the Edge Function only ever calls
+  // one of these three) is priced at $0 rather than guessed.
+  var REAL_PRICING = {
+    "claude-sonnet-5": { in: 2.00, out: 10.00 },
+    "claude-opus-4-8": { in: 5.00, out: 25.00 },
+    "claude-haiku-4-5": { in: 1.00, out: 5.00 }
+  };
+  var AGENT_NAMES = {
+    research: "Research & Data", finance: "Finance", ops: "Operations",
+    risk: "Risk & Compliance", strategy: "Strategy", writer: "Executive Writer"
+  };
+
+  function realCost(model, inputTokens, outputTokens) {
+    var p = REAL_PRICING[model] || { in: 0, out: 0 };
+    return (inputTokens / 1e6) * p.in + (outputTokens / 1e6) * p.out;
+  }
+
+  function fmtUsd(n) { return "$" + n.toFixed(n < 10 ? 4 : 2); }
+  function fmtInt(n) { return n.toLocaleString(); }
+
+  function renderRealSpend(calls) {
+    var section = document.getElementById("real-spend-section");
+    if (calls === null) {
+      // Anonymous / read-only public demo — Orchestrate never runs here.
+      document.getElementById("real-spend-body").innerHTML =
+        "<div class='real-empty'>Sign in and run Orchestrate from the <a href='index.html'>Command Center</a> to see your workspace's real, measured spend here. The public demo is view-only, so there's no real Claude usage to show yet.</div>";
+      return;
+    }
+
+    var totalCost = 0, totalIn = 0, totalOut = 0;
+    var byModel = {}, byAgent = {};
+    calls.forEach(function (c) {
+      var cost = realCost(c.model, c.input_tokens, c.output_tokens);
+      totalCost += cost; totalIn += c.input_tokens; totalOut += c.output_tokens;
+
+      var m = byModel[c.model] || (byModel[c.model] = { calls: 0, inTok: 0, outTok: 0, cost: 0 });
+      m.calls++; m.inTok += c.input_tokens; m.outTok += c.output_tokens; m.cost += cost;
+
+      var a = byAgent[c.agent_id] || (byAgent[c.agent_id] = { calls: 0, inTok: 0, outTok: 0, cost: 0 });
+      a.calls++; a.inTok += c.input_tokens; a.outTok += c.output_tokens; a.cost += cost;
+    });
+
+    document.getElementById("real-total-cost").textContent = fmtUsd(totalCost);
+    document.getElementById("real-call-count").textContent = fmtInt(calls.length);
+    // Every run is exactly 6 agent calls (Research/Finance/Ops/Risk/Strategy/Writer).
+    document.getElementById("real-run-count").textContent = fmtInt(Math.round(calls.length / 6));
+    document.getElementById("real-token-count").textContent = fmtInt(totalIn + totalOut);
+
+    var modelRows = Object.keys(byModel).sort(function (x, y) { return byModel[y].cost - byModel[x].cost; });
+    document.getElementById("real-model-rows").innerHTML = modelRows.length
+      ? modelRows.map(function (m) {
+          var r = byModel[m];
+          return "<tr><td>" + m + "</td><td class='tabular'>" + fmtInt(r.calls) + "</td><td class='tabular'>" + fmtInt(r.inTok) + "</td><td class='tabular'>" + fmtInt(r.outTok) + "</td><td class='tabular'>" + fmtUsd(r.cost) + "</td></tr>";
+        }).join("")
+      : "<tr><td colspan='5'>No real Orchestrate calls logged yet for this workspace.</td></tr>";
+
+    var agentRows = Object.keys(byAgent).sort(function (x, y) { return byAgent[y].cost - byAgent[x].cost; });
+    document.getElementById("real-agent-rows").innerHTML = agentRows.length
+      ? agentRows.map(function (a) {
+          var r = byAgent[a];
+          return "<tr><td>" + (AGENT_NAMES[a] || a) + "</td><td class='tabular'>" + fmtInt(r.calls) + "</td><td class='tabular'>" + fmtInt(r.inTok) + "</td><td class='tabular'>" + fmtInt(r.outTok) + "</td><td class='tabular'>" + fmtUsd(r.cost) + "</td></tr>";
+        }).join("")
+      : "<tr><td colspan='5'>No real Orchestrate calls logged yet for this workspace.</td></tr>";
+  }
+
   renderTierBars();
   Aiven.loadState().then(function (s) {
     state = s;
     renderProviderBars();
   }).catch(function (e) {
     Aiven.toast("Couldn't load model spend data: " + e.message);
+  });
+
+  Aiven.getRealSpend().then(renderRealSpend).catch(function (e) {
+    Aiven.toast("Couldn't load real spend telemetry: " + e.message);
   });
 })();
 </script>
