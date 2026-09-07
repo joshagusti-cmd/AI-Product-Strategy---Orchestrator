@@ -53,7 +53,7 @@
 <div class="shell">
   <div class="page-head">
     <h1>&gt; Shadow AI Audit</h1>
-    <p>Ungoverned AI tool use the orchestrator doesn't yet control — personal accounts, unsanctioned browser extensions, informal spreadsheets. Every find gets triaged: govern it under the same audit logging as everything else, or kill it outright.</p>
+    <p>Real discovery, scoped to what this platform can actually see about itself: Agent Registry entries whose declared model isn't one this workspace can really call, and real Orchestrate runs that requested an ungoverned model and got silently substituted. Every find gets triaged: govern it (log it, keep the safe substitution) or kill it (reassign the agent to a real model). This does not scan for outside tool use — personal ChatGPT accounts, unsanctioned browser extensions — which would need real endpoint/CASB integration this prototype doesn't have.</p>
   </div>
 
   <section class="kpi-strip" aria-label="Shadow AI metrics">
@@ -64,7 +64,7 @@
   </section>
 
   <div class="filters">
-    <span class="hint" style="font-size:12px;color:var(--text-mute);">Quarterly cadence per the governance policy — run a scan to simulate discovering new unmanaged tool use.</span>
+    <span class="hint" style="font-size:12px;color:var(--text-mute);">Real, deterministic scan of the Agent Registry and real Orchestrate call telemetry — not simulated. Run it anytime.</span>
     <button class="btn primary" id="run-scan" type="button">Run Shadow AI Scan</button>
   </div>
 
@@ -94,14 +94,72 @@
   Aiven.initChrome();
   var state = { shadowTools: [] };
 
-  var SCAN_POOL = [
-    { id: "sh4", name: "Marketing team's unsanctioned Gemini browser extension used to draft social copy", owner: "Marketing (unmanaged)", risk: "Low",
-      note: "No PII exposure identified yet — awaiting compliance review." },
-    { id: "sh5", name: "Sales reps pasting call transcripts into a personal Claude.ai account for follow-up emails", owner: "Sales (unmanaged)", risk: "Medium",
-      note: "Transcripts contain prospect contact information — review before deciding govern vs. kill." },
-    { id: "sh6", name: "HR analyst using an unsanctioned resume-screening GPT to pre-filter candidates", owner: "HR (unmanaged)", risk: "High",
-      note: "Potential adverse-impact / EEOC exposure — recommend kill pending legal review." }
-  ];
+  // What the real Orchestrate pipeline can actually honor without a
+  // silent substitution — mirrors MODEL_LABEL_TO_ID in
+  // supabase/functions/orchestrate/index.ts exactly. Deliberately NOT
+  // the full agents.html dropdown list: "Claude Haiku 4.5" is offered
+  // there but isn't in MODEL_LABEL_TO_ID either, so picking it manually
+  // gets substituted too — a real gap this scan is designed to surface,
+  // not paper over.
+  var REAL_MODELS = ["Claude Sonnet 5", "Claude Opus 4.8"];
+
+  // The only agent ids the real Edge Function ever actually calls (see
+  // AGENT_DEFS in supabase/functions/orchestrate/index.ts). The agents
+  // table also holds the fraud-ops vertical's illustrative roster
+  // (scanning/context/dispute/compliance) — that's a separate modeled
+  // narrative (same category as the Leader/Filler/Killer cost curve),
+  // never invoked by a real run, so flagging its model choices here
+  // would be noise, not a real finding.
+  var REAL_AGENT_IDS = ["research", "finance", "ops", "risk", "strategy", "writer"];
+  var AGENT_NAMES = {
+    research: "Research & Data Agent", finance: "Finance Agent", ops: "Operations Agent",
+    risk: "Risk & Compliance Agent", strategy: "Strategy Agent", writer: "Executive Writer Agent"
+  };
+
+  // Finding #1: a real Command Center agent's declared model (Agent
+  // Registry) isn't one the backend can really call — every real run
+  // for it silently falls back to Claude. A genuine governance-record
+  // mismatch, read straight from the real agents table.
+  function computeRegistryFindings(agents) {
+    return (agents || [])
+      .filter(function (a) { return REAL_AGENT_IDS.indexOf(a.id) !== -1 && REAL_MODELS.indexOf(a.model) === -1; })
+      .map(function (a) {
+        return {
+          id: "agent-model-" + a.id,
+          name: "Agent Registry lists " + a.name + " as running " + a.model + " — no real key is configured for that provider, so every real Orchestrate call for it actually runs on Claude instead.",
+          owner: a.dept + " — " + a.name,
+          risk: a.id === "risk" ? "High" : "Medium",
+          note: "Registry drift, not simulated: read straight from the real agents table. Reassign it to a real model on the Agent Registry to close the gap, or Govern to accept the automatic (safe) substitution knowingly."
+        };
+      });
+  }
+
+  // Finding #2: a real Orchestrate run actually asked for an ungoverned
+  // model (e.g. picked "GPT-4o" in the per-agent dropdown) and the Edge
+  // Function silently substituted it — real telemetry from
+  // orchestrate_call_log.requested_model, not invented flavor text.
+  // Repeated requests for the same (agent, model) pair escalate risk.
+  function computeSubstitutionFindings(callLog) {
+    var byKey = {};
+    (callLog || []).forEach(function (row) {
+      if (!row.requested_model || row.requested_model === row.model) return;
+      var key = row.agent_id + "::" + row.requested_model;
+      byKey[key] = byKey[key] || { agentId: row.agent_id, requested: row.requested_model, usedModel: row.model, count: 0 };
+      byKey[key].count++;
+    });
+    return Object.keys(byKey).map(function (key) {
+      var f = byKey[key];
+      var risk = f.count >= 3 ? "High" : f.count >= 2 ? "Medium" : "Low";
+      var agentName = AGENT_NAMES[f.agentId] || f.agentId;
+      return {
+        id: "call-sub-" + key.replace(/[^a-zA-Z0-9]+/g, "-"),
+        name: "Real Orchestrate runs requested “" + f.requested + "” for the " + agentName + " " + f.count + " time" + (f.count === 1 ? "" : "s") + " — silently substituted to " + f.usedModel + " (no real key configured for that provider).",
+        owner: agentName,
+        risk: risk,
+        note: "Real telemetry from orchestrate_call_log, not simulated — this actually happened in a signed-in run. The substitution kept the run safe automatically; the repeated request suggests someone expects that provider to be live."
+      };
+    });
+  }
 
   function renderKpis() {
     var tools = state.shadowTools;
@@ -149,25 +207,46 @@
   }
 
   document.getElementById("run-scan").addEventListener("click", async function () {
-    var found = SCAN_POOL.find(function (p) { return !state.shadowTools.some(function (t) { return t.id === p.id; }); });
-    if (!found) {
-      Aiven.toast("Scan complete — no new unmanaged tool use found this pass");
-      return;
-    }
     var scanBtn = this;
     scanBtn.disabled = true;
+    scanBtn.textContent = "Scanning…";
     try {
-      await Aiven.addShadowTool(found);
-      state.shadowTools.push({ id: found.id, name: found.name, owner: found.owner, risk: found.risk, decision: "undecided", note: found.note });
-      await Aiven.addAudit({ actor: "Shadow AI scan", model: "—", risk: found.risk,
-        action: "Discovered unmanaged tool: " + found.name, detail: "Owner: " + found.owner + " — awaiting triage." });
-      Aiven.toast("Scan found 1 new unmanaged tool — awaiting triage");
+      var registryFindings = computeRegistryFindings(state.agents);
+      // Demo/anonymous workspace has no real Orchestrate telemetry —
+      // getRealSpend() returns null there rather than an empty array.
+      var callLog = Aiven.auth.isDemo() ? null : await Aiven.getRealSpend();
+      var subFindings = callLog ? computeSubstitutionFindings(callLog) : [];
+      var allFindings = registryFindings.concat(subFindings);
+
+      var existingIds = {};
+      state.shadowTools.forEach(function (t) { existingIds[t.id] = true; });
+      var newFindings = allFindings.filter(function (f) { return !existingIds[f.id]; });
+
+      if (!newFindings.length) {
+        Aiven.toast(allFindings.length
+          ? "Scan complete — " + allFindings.length + " known finding(s) already on record, nothing new"
+          : "Scan complete — no ungoverned model usage found in this workspace's real data");
+        return;
+      }
+
+      for (var i = 0; i < newFindings.length; i++) {
+        var f = newFindings[i];
+        await Aiven.addShadowTool(f);
+        state.shadowTools.push({ id: f.id, name: f.name, owner: f.owner, risk: f.risk, decision: "undecided", note: f.note });
+      }
+      await Aiven.addAudit({
+        actor: "Shadow AI scan", model: "—", risk: "—",
+        action: "Real discovery scan found " + newFindings.length + " new ungoverned-model finding" + (newFindings.length === 1 ? "" : "s"),
+        detail: newFindings.map(function (f) { return f.owner; }).join(", ") + " — derived from the real Agent Registry and Orchestrate call telemetry, not simulated."
+      });
+      Aiven.toast("Scan found " + newFindings.length + " new finding" + (newFindings.length === 1 ? "" : "s") + " — awaiting triage");
       renderKpis();
       renderTable();
     } catch (e) {
       Aiven.toast("Scan failed: " + e.message);
     } finally {
       scanBtn.disabled = false;
+      scanBtn.textContent = "Run Shadow AI Scan";
     }
   });
 
