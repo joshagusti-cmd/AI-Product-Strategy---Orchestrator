@@ -349,14 +349,26 @@
   async function getUsage() {
     await ready;
     if (currentWorkspaceId === DEMO_WORKSPACE_ID) return null;
-    var wsRes = await sb.from("workspaces").select("daily_orchestrate_limit").eq("id", currentWorkspaceId).maybeSingle();
+    var wsRes = await sb.from("workspaces").select("daily_orchestrate_limit, plan").eq("id", currentWorkspaceId).maybeSingle();
     if (wsRes.error) throw wsRes.error;
     var limit = (wsRes.data && wsRes.data.daily_orchestrate_limit) || 20;
+    var plan = (wsRes.data && wsRes.data.plan) || "free";
     var since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     var countRes = await sb.from("orchestrate_usage").select("id", { count: "exact", head: true })
       .eq("workspace_id", currentWorkspaceId).gte("called_at", since);
     if (countRes.error) throw countRes.error;
-    return { used: countRes.count || 0, limit: limit };
+    return { used: countRes.count || 0, limit: limit, plan: plan };
+  }
+
+  // Admin only (RLS: the workspaces table has no client UPDATE policy at
+  // all — this security-definer RPC, migrations/0009, is the sole write
+  // path). Changes the enforced Orchestrate cap to the picked plan's
+  // fixed limit. No real billing/payment processing — this changes the
+  // real, enforced cap immediately, but nothing is actually charged.
+  async function setPlan(plan) {
+    requireOwnWorkspace();
+    var r = await sb.rpc("set_workspace_plan", { ws: currentWorkspaceId, new_plan: plan });
+    if (r.error) throw r.error;
   }
 
   /* ---------------- auth actions ---------------- */
@@ -394,7 +406,36 @@
       ROLE_OPTIONS.map(function (r) { return "<option value='" + r + "'" + (r === selected ? " selected" : "") + ">" + roleLabel(r) + "</option>"; }).join("") +
       "</select>";
   }
-  function renderTeamBody(body, team, myRole) {
+
+  // Fixed plan -> Orchestrate-cap table, mirroring the one enforced
+  // server-side in set_workspace_plan (migrations/0009) — shown here
+  // purely for display/labeling, not as a second source of truth (the
+  // RPC itself decides the real number).
+  var PLAN_INFO = {
+    free: { label: "Free", limit: 20 },
+    pro: { label: "Pro", limit: 100 },
+    enterprise: { label: "Enterprise", limit: 500 }
+  };
+  var PLAN_ORDER = ["free", "pro", "enterprise"];
+  function renderPlanSection(usage, amAdmin) {
+    if (!usage) return "";
+    var info = PLAN_INFO[usage.plan] || PLAN_INFO.free;
+    var pct = usage.limit ? Math.min(100, Math.round((usage.used / usage.limit) * 100)) : 0;
+    var buttons = amAdmin
+      ? PLAN_ORDER.filter(function (key) { return key !== usage.plan; }).map(function (key) {
+          var verb = PLAN_INFO[key].limit > usage.limit ? "Upgrade to " : "Downgrade to ";
+          return "<button class='btn small ghost' data-set-plan='" + key + "' type='button'>" + verb + PLAN_INFO[key].label + "</button>";
+        }).join("")
+      : "";
+    return "<div class='team-section'><h4>Plan</h4>" +
+      "<div class='plan-row'><span class='plan-badge'>" + info.label + "</span>" +
+      "<span class='plan-usage'>" + usage.used + " / " + usage.limit + " Orchestrate runs used today</span></div>" +
+      (buttons ? "<div class='plan-actions'>" + buttons + "</div>" : "") +
+      "<p class='hint'>No real billing here — changing plan immediately changes the real, enforced daily cap; nothing is actually charged.</p>" +
+      "</div>";
+  }
+
+  function renderTeamBody(body, team, myRole, usage) {
     var amAdmin = myRole === "admin";
     var membersHtml = team.members.map(function (m) {
       var mine = currentUser && m.user_id === currentUser.id;
@@ -425,11 +466,24 @@
       : "<p class='muted'>Only workspace admins can invite, remove, or change roles. Ask an admin (" + roleLabel("admin") + ") on this list.</p>";
 
     body.innerHTML =
+      renderPlanSection(usage, amAdmin) +
       "<div class='team-section'><h4>Members</h4>" + membersHtml + "</div>" +
       "<div class='team-section'><h4>Pending invites</h4>" + invitesHtml + "</div>" +
       inviteFormHtml;
 
-    async function refresh() { renderTeamBody(body, await listTeam(), myRole); }
+    async function refresh() {
+      var results = await Promise.all([listTeam(), getUsage()]);
+      renderTeamBody(body, results[0], myRole, results[1]);
+    }
+
+    body.querySelectorAll("[data-set-plan]").forEach(function (btn) {
+      btn.addEventListener("click", async function () {
+        var plan = btn.getAttribute("data-set-plan");
+        btn.disabled = true;
+        try { await setPlan(plan); toast("Plan changed to " + (PLAN_INFO[plan] ? PLAN_INFO[plan].label : plan) + "."); await refresh(); }
+        catch (e) { toast("Failed to change plan: " + e.message); btn.disabled = false; }
+      });
+    });
 
     body.querySelectorAll("[data-remove-member]").forEach(function (btn) {
       btn.addEventListener("click", async function () {
@@ -487,7 +541,7 @@
     overlay.id = "aiven-team-modal-overlay";
     overlay.innerHTML =
       "<div class='aiven-modal'>" +
-      "<div class='aiven-modal-head'><h3>" + currentWorkspaceName() + " — Team</h3>" +
+      "<div class='aiven-modal-head'><h3>" + currentWorkspaceName() + "</h3>" +
       "<button class='aiven-modal-close' type='button' aria-label='Close'>&times;</button></div>" +
       "<div class='aiven-modal-body' id='aiven-team-body'><p class='muted'>Loading…</p></div>" +
       "</div>";
@@ -496,7 +550,8 @@
     overlay.querySelector(".aiven-modal-close").addEventListener("click", closeTeamModal);
     var body = overlay.querySelector("#aiven-team-body");
     try {
-      renderTeamBody(body, await listTeam(), getRole());
+      var results = await Promise.all([listTeam(), getUsage()]);
+      renderTeamBody(body, results[0], getRole(), results[1]);
     } catch (e) {
       body.innerHTML = "<p class='muted'>Failed to load team: " + e.message + "</p>";
     }
@@ -515,7 +570,7 @@
       container.innerHTML =
         switcherHtml +
         "<span class='auth-email' title='Signed in'>" + currentUser.email + "</span>" +
-        "<button class='btn small' id='auth-team-btn' type='button'>Team</button>" +
+        "<button class='btn small' id='auth-team-btn' type='button'>Workspace</button>" +
         "<button class='btn small' id='auth-signout-btn' type='button'>Sign out</button>";
       var wsSelect = container.querySelector("#auth-ws-select");
       if (wsSelect) wsSelect.addEventListener("change", function () { switchWorkspace(wsSelect.value); });
@@ -649,6 +704,7 @@
     resetState: resetState,
     orchestrate: orchestrate,
     getUsage: getUsage,
+    setPlan: setPlan,
     timeAgo: timeAgo,
     timeClock: timeClock,
     toast: toast,
