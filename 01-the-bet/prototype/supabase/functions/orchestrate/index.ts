@@ -273,6 +273,37 @@ async function recordUsage(workspaceId: string, userId: string) {
   });
 }
 
+// Logs one real agent call's real model + token usage for spend
+// telemetry (migrations/0010). Called for every agent call that
+// completes, regardless of whether the overall run later succeeds —
+// those tokens were still really billed by Anthropic the moment the
+// call returned. Distinct from recordUsage above, which only fires once
+// per successful run and exists purely for the rate-limit check.
+async function logCall(
+  workspaceId: string,
+  userId: string,
+  agentId: string,
+  model: string,
+  usage: { input_tokens?: number; output_tokens?: number } | undefined,
+) {
+  try {
+    await serviceRoleFetch("orchestrate_call_log", {
+      method: "POST",
+      body: JSON.stringify({
+        workspace_id: workspaceId,
+        user_id: userId,
+        agent_id: agentId,
+        model,
+        input_tokens: usage?.input_tokens || 0,
+        output_tokens: usage?.output_tokens || 0,
+      }),
+    });
+  } catch (err) {
+    // Telemetry must never break a real orchestration run.
+    console.error("orchestrate: failed to log call", err);
+  }
+}
+
 // One real Anthropic call for one agent's turn. Throws a descriptive
 // error (naming the agent) on any failure so the caller can abort the
 // whole run cleanly instead of returning a partial result.
@@ -418,6 +449,8 @@ Deno.serve(async (req: Request) => {
       totalInputTokens += result.usage?.input_tokens || 0;
       totalOutputTokens += result.usage?.output_tokens || 0;
       modelsUsed.add(result.model || agent.model);
+
+      await logCall(workspaceId, userId, agent.id, result.model || routed.modelId, result.usage);
 
       if (isWriter) {
         const out = result.input || {};

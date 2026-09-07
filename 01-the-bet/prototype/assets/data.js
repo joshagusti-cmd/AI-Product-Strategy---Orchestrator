@@ -360,6 +360,24 @@
     return { used: countRes.count || 0, limit: limit, plan: plan };
   }
 
+  // Real, measured Orchestrate spend: one row per individual agent call
+  // (migrations/0010_real_spend_telemetry.sql), with the real model and
+  // real token counts Anthropic actually billed — not a modeled figure.
+  // Returns null for the read-only demo workspace (Orchestrate never
+  // runs there, so there's nothing measured to show). Most-recent-first,
+  // capped at 2000 rows — plenty for this prototype's spend dashboard.
+  async function getRealSpend() {
+    await ready;
+    if (currentWorkspaceId === DEMO_WORKSPACE_ID) return null;
+    var r = await sb.from("orchestrate_call_log")
+      .select("agent_id, model, input_tokens, output_tokens, called_at")
+      .eq("workspace_id", currentWorkspaceId)
+      .order("called_at", { ascending: false })
+      .limit(2000);
+    if (r.error) throw r.error;
+    return r.data || [];
+  }
+
   // Admin only (RLS: the workspaces table has no client UPDATE policy at
   // all — this security-definer RPC, migrations/0009, is the sole write
   // path). Changes the enforced Orchestrate cap to the picked plan's
@@ -704,6 +722,7 @@
     resetState: resetState,
     orchestrate: orchestrate,
     getUsage: getUsage,
+    getRealSpend: getRealSpend,
     setPlan: setPlan,
     timeAgo: timeAgo,
     timeClock: timeClock,
