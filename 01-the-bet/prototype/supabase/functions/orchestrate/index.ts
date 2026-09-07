@@ -29,6 +29,55 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // own limit or erase its own usage history to dodge it. One Orchestrate
 // run still only costs one unit of quota, even though it's now six API
 // calls under the hood.
+//
+// Optional automatic model routing (`autoRoute: true` in the request
+// body) replaces the manual per-agent `agentModels` selections with a
+// real, deterministic cascade-by-risk decision — see computeAutoRoute
+// below — the "cost-based automatic model routing" cascade this
+// product's own pricing model (03-the-margin/cost-curve.md) describes,
+// now actually implemented rather than just manually picked per agent.
+
+// Objective text and scope size are the only signals available before
+// any agent has run — this is a real, cheap, explainable heuristic, not
+// a claim of true risk assessment. Keyword list is deliberately narrow
+// and enterprise-governance-flavored (legal/compliance/financial/PII)
+// rather than a general sentiment/toxicity classifier.
+const RISK_KEYWORDS = [
+  "compliance", "regulatory", "regulation", "legal", "lawsuit", "litigation",
+  "layoff", "termination", "terminate", "pii", "personal data", "gdpr", "hipaa",
+  "sox", "financial statement", "sec filing", "audit", "fraud", "security breach",
+  "data breach", "discrimination", "harassment", "earnings", "merger", "acquisition",
+  "restructuring", "whistleblower", "investigation",
+];
+
+type AutoTier = "baseline" | "elevated" | "high";
+
+// Three-tier cascade mirroring the Leader/Filler/Killer cost model this
+// whole product is built around: cheap model for routine, low-stakes
+// work; escalate to a more capable model only where risk/complexity
+// signals actually warrant the extra cost and latency.
+const AUTO_ROUTE_TIERS: Record<AutoTier, Record<string, string>> = {
+  baseline: { research: "claude-haiku-4-5", finance: "claude-haiku-4-5", ops: "claude-haiku-4-5", risk: "claude-sonnet-5", strategy: "claude-sonnet-5", writer: "claude-sonnet-5" },
+  elevated: { research: "claude-sonnet-5", finance: "claude-sonnet-5", ops: "claude-sonnet-5", risk: "claude-opus-4-8", strategy: "claude-sonnet-5", writer: "claude-sonnet-5" },
+  high: { research: "claude-sonnet-5", finance: "claude-sonnet-5", ops: "claude-sonnet-5", risk: "claude-opus-4-8", strategy: "claude-opus-4-8", writer: "claude-opus-4-8" },
+};
+
+function computeAutoRoute(objective: string, departments: string[], sources: string[]) {
+  const lower = objective.toLowerCase();
+  const matchedKeywords = RISK_KEYWORDS.filter((kw) => lower.includes(kw));
+  const complexityScore = departments.length + sources.length;
+
+  let tier: AutoTier;
+  if (matchedKeywords.length >= 2 || (matchedKeywords.length >= 1 && complexityScore >= 5)) {
+    tier = "high";
+  } else if (matchedKeywords.length >= 1 || complexityScore >= 4) {
+    tier = "elevated";
+  } else {
+    tier = "baseline";
+  }
+
+  return { tier, matchedKeywords, complexityScore, modelsByAgent: AUTO_ROUTE_TIERS[tier] };
+}
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -304,13 +353,14 @@ Deno.serve(async (req: Request) => {
     return json({ error: rateLimitError.error }, rateLimitError.status);
   }
 
-  let objective: string, departments: string[], sources: string[], agentModels: Record<string, unknown>;
+  let objective: string, departments: string[], sources: string[], agentModels: Record<string, unknown>, autoRoute: boolean;
   try {
     const body = await req.json();
     objective = body.objective;
     departments = Array.isArray(body.departments) ? body.departments : [];
     sources = Array.isArray(body.sources) ? body.sources : [];
     agentModels = body.agentModels && typeof body.agentModels === "object" ? body.agentModels : {};
+    autoRoute = body.autoRoute === true;
   } catch {
     return json({ error: "Invalid JSON body." }, 400);
   }
@@ -327,6 +377,8 @@ Deno.serve(async (req: Request) => {
   }
 
   const briefing = `Business objective: ${objective}\nDepartments in scope: ${departments.join(", ") || "none specified"}\nData sources in scope: ${sources.join(", ") || "none specified"}`;
+
+  const autoRouteResult = autoRoute ? computeAutoRoute(objective, departments, sources) : null;
 
   const steps: Array<{ agentId: string; agentName: string; title: string; detail: string; riskFlag?: { severity: string; text: string } }> = [];
   let totalInputTokens = 0;
@@ -348,7 +400,9 @@ Deno.serve(async (req: Request) => {
 
       const user = `${briefing}\n\n${priorContext}`;
 
-      const routed = resolveAgentModel(agent, agentModels[agent.id]);
+      const routed = autoRouteResult
+        ? { modelId: autoRouteResult.modelsByAgent[agent.id] || agent.model, substitution: null }
+        : resolveAgentModel(agent, agentModels[agent.id]);
       if (routed.substitution) substitutions.push(routed.substitution);
 
       const result = await callAgent({
@@ -385,6 +439,9 @@ Deno.serve(async (req: Request) => {
           model: Array.from(modelsUsed).join(" · "),
           usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens },
           substitutions,
+          routing: autoRouteResult
+            ? { mode: "auto", tier: autoRouteResult.tier, matchedKeywords: autoRouteResult.matchedKeywords, complexityScore: autoRouteResult.complexityScore }
+            : { mode: "manual" },
         });
       }
 

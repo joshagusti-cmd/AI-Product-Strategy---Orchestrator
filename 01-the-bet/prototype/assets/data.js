@@ -314,7 +314,11 @@
   // Function routes each agent's real call to whichever Claude model that
   // label maps to, falling back (with a note in response.substitutions)
   // for labels with no real key configured (GPT-4o, Gemini 1.5 Pro).
-  async function orchestrate(objective, departments, sources, agentModels) {
+  // autoRoute: when true, agentModels is ignored server-side and the
+  // Edge Function picks each agent's model itself — a real, deterministic
+  // cascade by risk keywords + scope size (see computeAutoRoute in
+  // supabase/functions/orchestrate/index.ts), not a manual per-agent pick.
+  async function orchestrate(objective, departments, sources, agentModels, autoRoute) {
     await ready;
     var session = (await sb.auth.getSession()).data.session;
     var token = session ? session.access_token : SUPABASE_ANON_KEY;
@@ -325,13 +329,16 @@
         "apikey": SUPABASE_ANON_KEY,
         "authorization": "Bearer " + token
       },
-      body: JSON.stringify({ objective: objective, departments: departments, sources: sources, agentModels: agentModels || {} })
+      body: JSON.stringify({
+        objective: objective, departments: departments, sources: sources,
+        agentModels: agentModels || {}, autoRoute: !!autoRoute
+      })
     });
     var body = await resp.json().catch(function () { return {}; });
     if (!resp.ok || body.error) {
       throw new Error(body.error || ("Orchestration request failed (" + resp.status + ")"));
     }
-    return body; // { result, model, usage, substitutions }
+    return body; // { result, model, usage, substitutions, routing }
   }
 
   // Reads the caller's own workspace's rolling-24h Orchestrate usage
