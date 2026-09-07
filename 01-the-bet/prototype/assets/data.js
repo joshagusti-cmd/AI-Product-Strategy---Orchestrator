@@ -11,6 +11,11 @@
      instead of the demo.
    - Orchestrating (a real, metered Claude call) requires a signed-in
      session — the Edge Function itself rejects anonymous requests.
+   - Teams: a workspace member can invite a teammate by email (the
+     "Team" button in the auth widget). An invited teammate joins that
+     workspace automatically on their next sign-in — a user can belong
+     to more than one workspace now, switchable via the workspace
+     dropdown that appears once they do.
    ========================================================================= */
 (function (global) {
   "use strict";
@@ -28,27 +33,55 @@
   /* ---------------- auth / workspace state ---------------- */
   var currentUser = null;
   var currentWorkspaceId = DEMO_WORKSPACE_ID;
+  var currentWorkspaces = []; // every workspace this user belongs to: [{ id, name, role }]
   var authListeners = [];
   var resolveReady;
   var ready = new Promise(function (res) { resolveReady = res; });
 
-  async function resolveWorkspaceId(userId) {
+  function rememberedWorkspaceId(userId) {
+    try { return global.localStorage.getItem("aiven_ws_" + userId); } catch (e) { return null; }
+  }
+  function rememberWorkspaceId(userId, wsId) {
+    try { global.localStorage.setItem("aiven_ws_" + userId, wsId); } catch (e) { /* private browsing, etc. — non-critical */ }
+  }
+
+  // Every workspace a signed-in user belongs to (now that teams/invites
+  // means that can be more than one — see migrations/0007). Retries
+  // briefly since the auto-provision trigger (or an invite being
+  // accepted) can still be racing this request right after sign-in.
+  async function resolveMemberships(userId) {
     for (var attempt = 0; attempt < 3; attempt++) {
-      var r = await sb.from("workspace_members").select("workspace_id").eq("user_id", userId).limit(1).maybeSingle();
+      var r = await sb.from("workspace_members")
+        .select("workspace_id, role, created_at, workspaces(name)")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: true });
       if (r.error) throw r.error;
-      if (r.data) return r.data.workspace_id;
-      await new Promise(function (res) { setTimeout(res, 600); }); // auto-provision trigger racing us — retry briefly
+      if (r.data && r.data.length) {
+        return r.data.map(function (row) {
+          return { id: row.workspace_id, name: row.workspaces ? row.workspaces.name : row.workspace_id, role: row.role };
+        });
+      }
+      await new Promise(function (res) { setTimeout(res, 600); });
     }
-    return null;
+    return [];
   }
 
   async function handleAuthChange(session) {
     var user = session && session.user ? session.user : null;
     currentUser = user;
+    currentWorkspaces = [];
     if (user) {
       try {
-        var wsId = await resolveWorkspaceId(user.id);
-        currentWorkspaceId = wsId || DEMO_WORKSPACE_ID;
+        // Picks up any invite sent to this email after they'd already
+        // signed up once (the signup trigger only runs at account
+        // creation) — safe to call even if there's nothing pending.
+        try { await sb.rpc("accept_pending_invites"); } catch (e) { console.error("Aiven: accept_pending_invites failed", e); }
+
+        var memberships = await resolveMemberships(user.id);
+        currentWorkspaces = memberships;
+        var remembered = rememberedWorkspaceId(user.id);
+        var match = memberships.find(function (m) { return m.id === remembered; });
+        currentWorkspaceId = (match || memberships[0] || {}).id || DEMO_WORKSPACE_ID;
       } catch (e) {
         console.error("Aiven: failed to resolve workspace for signed-in user", e);
         currentWorkspaceId = DEMO_WORKSPACE_ID;
@@ -57,6 +90,17 @@
       currentWorkspaceId = DEMO_WORKSPACE_ID;
     }
     authListeners.forEach(function (fn) { try { fn(currentUser, currentWorkspaceId); } catch (e) { console.error(e); } });
+  }
+
+  // Switches the active workspace among the ones this user belongs to.
+  // Reloads the page — simplest way to get every already-initialized
+  // page script (which reads Aiven.loadState() once at startup) to
+  // re-read against the new workspace, matching how sign-out already
+  // reloads rather than trying to live-patch every page's state.
+  function switchWorkspace(wsId) {
+    if (!currentUser) return;
+    rememberWorkspaceId(currentUser.id, wsId);
+    global.location.reload();
   }
 
   sb.auth.onAuthStateChange(function (_event, session) {
@@ -173,6 +217,44 @@
     if (r.error) throw r.error;
   }
 
+  /* ---------------- teams / invites (current workspace) ---------------- */
+  // Members' emails aren't readable via PostgREST directly (auth.users
+  // isn't exposed), so this goes through the list_workspace_members RPC,
+  // which checks membership server-side before returning anything.
+  async function listTeam() {
+    if (currentWorkspaceId === DEMO_WORKSPACE_ID) return { members: [], invites: [] };
+    var membersRes = await sb.rpc("list_workspace_members", { ws: currentWorkspaceId });
+    if (membersRes.error) throw membersRes.error;
+    var invitesRes = await sb.from("workspace_invites").select("*")
+      .eq("workspace_id", currentWorkspaceId).is("accepted_at", null)
+      .order("created_at", { ascending: false });
+    if (invitesRes.error) throw invitesRes.error;
+    return { members: membersRes.data || [], invites: invitesRes.data || [] };
+  }
+
+  async function inviteTeammate(email) {
+    requireOwnWorkspace();
+    var r = await sb.from("workspace_invites").insert({
+      workspace_id: currentWorkspaceId, email: email, invited_by: currentUser.id
+    });
+    if (r.error) throw r.error;
+  }
+
+  async function revokeInvite(id) {
+    requireOwnWorkspace();
+    var r = await sb.from("workspace_invites").delete().eq("id", id).eq("workspace_id", currentWorkspaceId);
+    if (r.error) throw r.error;
+  }
+
+  // Removing yourself ("leave workspace") isn't supported — RLS blocks
+  // it outright (see migrations/0007) — so this is only ever called on
+  // a different member.
+  async function removeMember(userId) {
+    requireOwnWorkspace();
+    var r = await sb.from("workspace_members").delete().eq("workspace_id", currentWorkspaceId).eq("user_id", userId);
+    if (r.error) throw r.error;
+  }
+
   /* ---------------- real model call (requires sign-in) ---------------- */
   // agentModels: optional { [agentId]: "Claude Sonnet 5" | "Claude Opus 4.8" | ... }
   // reflecting the Command Center's per-agent model dropdown — the Edge
@@ -231,18 +313,124 @@
   }
   function getUser() { return currentUser; }
   function isDemo() { return currentWorkspaceId === DEMO_WORKSPACE_ID; }
+  function getWorkspaces() { return currentWorkspaces; }
   function onAuthChange(fn) {
     authListeners.push(fn);
     ready.then(function () { fn(currentUser, currentWorkspaceId); });
+  }
+
+  /* ---------------- team modal (built on demand, not per-page markup) ---------------- */
+  function currentWorkspaceName() {
+    var ws = currentWorkspaces.find(function (w) { return w.id === currentWorkspaceId; });
+    return ws ? ws.name : "your workspace";
+  }
+  function closeTeamModal() {
+    var el = document.getElementById("aiven-team-modal-overlay");
+    if (el) el.remove();
+  }
+  function renderTeamBody(body, team) {
+    var membersHtml = team.members.map(function (m) {
+      var mine = currentUser && m.user_id === currentUser.id;
+      return "<div class='team-row'><div><span class='team-email'>" + m.email + (mine ? " (you)" : "") + "</span>" +
+        "<span class='team-role'>" + m.role + "</span></div>" +
+        (mine ? "" : "<button class='btn small ghost' data-remove-member='" + m.user_id + "' type='button'>Remove</button>") +
+        "</div>";
+    }).join("") || "<p class='muted'>No members yet.</p>";
+
+    var invitesHtml = team.invites.map(function (inv) {
+      return "<div class='team-row'><div><span class='team-email'>" + inv.email + "</span><span class='team-role'>pending</span></div>" +
+        "<button class='btn small ghost' data-revoke-invite='" + inv.id + "' type='button'>Revoke</button></div>";
+    }).join("") || "<p class='muted'>No pending invites.</p>";
+
+    body.innerHTML =
+      "<div class='team-section'><h4>Members</h4>" + membersHtml + "</div>" +
+      "<div class='team-section'><h4>Pending invites</h4>" + invitesHtml + "</div>" +
+      "<div class='team-section'><h4>Invite a teammate</h4>" +
+      "<div class='team-invite-form'>" +
+      "<input class='control' id='aiven-invite-email' type='email' placeholder='teammate@company.com' autocomplete='email'>" +
+      "<button class='btn small' id='aiven-invite-btn' type='button'>Send invite</button>" +
+      "</div>" +
+      "<p class='hint'>They'll join this workspace automatically the next time they sign in with that email — no separate accept step.</p>" +
+      "</div>";
+
+    async function refresh() { renderTeamBody(body, await listTeam()); }
+
+    body.querySelectorAll("[data-remove-member]").forEach(function (btn) {
+      btn.addEventListener("click", async function () {
+        if (!global.confirm("Remove this teammate from the workspace?")) return;
+        btn.disabled = true;
+        try { await removeMember(btn.getAttribute("data-remove-member")); toast("Removed from the workspace."); await refresh(); }
+        catch (e) { toast("Failed to remove: " + e.message); btn.disabled = false; }
+      });
+    });
+    body.querySelectorAll("[data-revoke-invite]").forEach(function (btn) {
+      btn.addEventListener("click", async function () {
+        btn.disabled = true;
+        try { await revokeInvite(btn.getAttribute("data-revoke-invite")); toast("Invite revoked."); await refresh(); }
+        catch (e) { toast("Failed to revoke: " + e.message); btn.disabled = false; }
+      });
+    });
+
+    var inviteBtn = body.querySelector("#aiven-invite-btn");
+    var inviteInput = body.querySelector("#aiven-invite-email");
+    var submitInvite = async function () {
+      var email = inviteInput.value.trim();
+      if (!email) { toast("Enter an email address first."); return; }
+      inviteBtn.disabled = true;
+      try {
+        await inviteTeammate(email);
+        toast("Invited " + email + " — they'll join automatically on their next sign-in.");
+        inviteInput.value = "";
+        await refresh();
+      } catch (e) {
+        toast("Invite failed: " + e.message);
+      } finally {
+        inviteBtn.disabled = false;
+      }
+    };
+    inviteBtn.addEventListener("click", submitInvite);
+    inviteInput.addEventListener("keydown", function (e) { if (e.key === "Enter") submitInvite(); });
+  }
+  async function openTeamModal() {
+    closeTeamModal();
+    var overlay = document.createElement("div");
+    overlay.className = "aiven-modal-overlay";
+    overlay.id = "aiven-team-modal-overlay";
+    overlay.innerHTML =
+      "<div class='aiven-modal'>" +
+      "<div class='aiven-modal-head'><h3>" + currentWorkspaceName() + " — Team</h3>" +
+      "<button class='aiven-modal-close' type='button' aria-label='Close'>&times;</button></div>" +
+      "<div class='aiven-modal-body' id='aiven-team-body'><p class='muted'>Loading…</p></div>" +
+      "</div>";
+    document.body.appendChild(overlay);
+    overlay.addEventListener("click", function (e) { if (e.target === overlay) closeTeamModal(); });
+    overlay.querySelector(".aiven-modal-close").addEventListener("click", closeTeamModal);
+    var body = overlay.querySelector("#aiven-team-body");
+    try {
+      renderTeamBody(body, await listTeam());
+    } catch (e) {
+      body.innerHTML = "<p class='muted'>Failed to load team: " + e.message + "</p>";
+    }
   }
 
   /* ---------------- auth widget (shared markup injected into every page) ---------------- */
   function renderAuthWidget(container) {
     if (!container) return;
     if (currentUser) {
+      var switcherHtml = currentWorkspaces.length > 1
+        ? "<select class='control auth-ws-select' id='auth-ws-select' title='Switch workspace'>" +
+          currentWorkspaces.map(function (w) {
+            return "<option value='" + w.id + "'" + (w.id === currentWorkspaceId ? " selected" : "") + ">" + w.name + "</option>";
+          }).join("") + "</select>"
+        : "";
       container.innerHTML =
+        switcherHtml +
         "<span class='auth-email' title='Signed in'>" + currentUser.email + "</span>" +
+        "<button class='btn small' id='auth-team-btn' type='button'>Team</button>" +
         "<button class='btn small' id='auth-signout-btn' type='button'>Sign out</button>";
+      var wsSelect = container.querySelector("#auth-ws-select");
+      if (wsSelect) wsSelect.addEventListener("change", function () { switchWorkspace(wsSelect.value); });
+      container.querySelector("#auth-team-btn").addEventListener("click", openTeamModal);
       var out = container.querySelector("#auth-signout-btn");
       out.addEventListener("click", async function () {
         out.disabled = true;
@@ -381,7 +569,15 @@
       signOut: signOut,
       getUser: getUser,
       isDemo: isDemo,
-      onChange: onAuthChange
+      onChange: onAuthChange,
+      getWorkspaces: getWorkspaces,
+      switchWorkspace: switchWorkspace
+    },
+    team: {
+      list: listTeam,
+      invite: inviteTeammate,
+      revokeInvite: revokeInvite,
+      removeMember: removeMember
     }
   };
 })(window);
