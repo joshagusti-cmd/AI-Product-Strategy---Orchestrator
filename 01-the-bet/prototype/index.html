@@ -569,16 +569,16 @@
 
   /* ---------------- agents / model governance ---------------- */
   var MODELS = ["Claude Sonnet 5", "Claude Opus 4.8", "GPT-4o", "Gemini 1.5 Pro"];
-  // Model labels here match what the orchestrate Edge Function actually
-  // calls per agent (see supabase/functions/orchestrate/index.ts —
-  // AGENT_DEFS) now that Orchestrate is six real, independent calls
-  // instead of one. Finance and Strategy were originally labeled
-  // "GPT-4o" as an illustrative multi-provider mix; since only an
-  // Anthropic key is configured, they really run on Claude Sonnet 5 —
-  // updated here so the label never claims a provider that isn't
-  // actually being called. True multi-provider routing (and wiring this
-  // dropdown to real per-call routing) is still open — see
-  // feature-ideas.md.
+  // `model` here is real, live routing: on Orchestrate, each agent's
+  // current model selection is sent to the Edge Function and used for
+  // that agent's actual Anthropic call (see
+  // supabase/functions/orchestrate/index.ts — resolveAgentModel).
+  // Reassigning an agent below changes which model really runs it on the
+  // next run, not just a label. Only "Claude Sonnet 5" and "Claude Opus
+  // 4.8" are real — no OpenAI/Google key is configured, so picking
+  // "GPT-4o" or "Gemini 1.5 Pro" falls back to that agent's Claude
+  // default and shows a toast naming the substitution after the run.
+  // True multi-provider support is still open — see feature-ideas.md.
   var AGENTS = [
     { id: "research", name: "Research & Data Agent", model: "Claude Sonnet 5", role: "Pulls and reconciles data across connected systems", x: 0.18, y: 0.28 },
     { id: "finance", name: "Finance Agent", model: "Claude Sonnet 5", role: "Analyzes cost structure, margin, and variance", x: 0.18, y: 0.74 },
@@ -920,10 +920,15 @@
     var objective = document.getElementById("objective").value;
     var depts = DEPTS.filter(function (d) { return d.on; }).map(function (d) { return d.name; });
     var srcs = SOURCES.filter(function (s) { return s.on; }).map(function (s) { return s.name; });
+    // Real per-call routing: send each agent's current model reassignment
+    // (from the perf-table / network-label dropdowns) so the Edge
+    // Function actually calls that model, not a fixed default.
+    var agentModels = {};
+    AGENTS.forEach(function (a) { agentModels[a.id] = a.model; });
 
     var response;
     try {
-      response = await Aiven.orchestrate(objective, depts, srcs);
+      response = await Aiven.orchestrate(objective, depts, srcs, agentModels);
     } catch (err) {
       loadingEl.remove();
       document.getElementById("timeline-empty").style.display = "";
@@ -1029,6 +1034,12 @@
       dw.classList.add("show");
       dw.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
       toast("Executive Action Plan ready — routed for review (6 real Claude calls · " + (response.model || "model unknown") + ")");
+
+      var subs = response.substitutions || [];
+      if (subs.length) {
+        var subText = subs.map(function (s) { return s.agentName + " (" + s.requested + " → " + s.used + ")"; }).join(", ");
+        toast((subs.length === 1 ? "1 agent" : subs.length + " agents") + " requested a model with no key configured — ran on: " + subText);
+      }
 
       Aiven.addAudit({
         actor: "Executive Writer Agent", model: response.model || AGENTS[5].model, risk: "—",
