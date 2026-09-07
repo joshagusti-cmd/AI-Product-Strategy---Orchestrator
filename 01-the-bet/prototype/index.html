@@ -47,6 +47,11 @@
   .orchestrate-btn:disabled { opacity: 0.55; cursor: progress; }
   .orchestrate-btn:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
   .console-hint { font-family: var(--mono); font-size: 10.5px; color: var(--text-mute); }
+  .auto-route-toggle {
+    display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 10.5px;
+    color: var(--text-dim); cursor: pointer; user-select: none;
+  }
+  .auto-route-toggle input[type="checkbox"] { width: 13px; height: 13px; margin: 0; }
 
   /* ---------- kpi strip (this page: 6 tiles) ---------- */
   .kpi-strip { grid-template-columns: repeat(6, 1fr); }
@@ -300,6 +305,10 @@
       <button class="orchestrate-btn" id="orchestrate-btn" type="button">
         <span>▶</span> Orchestrate
       </button>
+      <label class="auto-route-toggle" title="When on, each agent's model is picked automatically by risk keywords + scope size instead of the manual per-agent dropdowns below.">
+        <input type="checkbox" id="auto-route-toggle" checked>
+        <span>Auto-route models by risk/complexity</span>
+      </label>
       <span class="console-hint" id="console-hint">6 agents governed · 3 model providers connected</span>
     </div>
   </section>
@@ -598,6 +607,19 @@
     writer: { tasks: 74, success: 98.8, latency: "8.4s", cost: "$0.17", trend: "up" }
   };
 
+  // While Auto-route is on, the manual per-agent dropdowns (perf table +
+  // network labels) are disabled — the Edge Function ignores them and
+  // picks each agent's model itself. Re-applied after every re-render
+  // since renderPerfTable rebuilds its <select> elements from scratch.
+  function applyAutoRouteState() {
+    var toggle = document.getElementById("auto-route-toggle");
+    var auto = toggle ? toggle.checked : false;
+    document.querySelectorAll(".model-select, .agent-model-select").forEach(function (sel) {
+      sel.disabled = auto;
+      sel.title = auto ? "Auto-route is on — disable it above to reassign models manually" : "";
+    });
+  }
+
   function renderPerfTable() {
     var t = document.getElementById("perf-table");
     var head = "<thead><tr><th>Agent</th><th>Model</th><th>Tasks · 30d</th><th>Success</th><th>Avg latency</th><th>Avg cost</th><th>Trend</th></tr></thead>";
@@ -621,8 +643,10 @@
         toast(agent.name + " reassigned to " + sel.value + " — governance policy re-evaluated");
       });
     });
+    applyAutoRouteState();
   }
   renderPerfTable();
+  document.getElementById("auto-route-toggle").addEventListener("change", applyAutoRouteState);
 
   /* ---------------- network canvas ---------------- */
   var canvas = document.getElementById("network");
@@ -662,6 +686,7 @@
         toast(a.name + " reassigned to " + e.target.value + " — governance policy re-evaluated");
       });
     });
+    applyAutoRouteState();
   }
   function positionLabels() {
     var r = wrap.getBoundingClientRect();
@@ -922,13 +947,16 @@
     var srcs = SOURCES.filter(function (s) { return s.on; }).map(function (s) { return s.name; });
     // Real per-call routing: send each agent's current model reassignment
     // (from the perf-table / network-label dropdowns) so the Edge
-    // Function actually calls that model, not a fixed default.
+    // Function actually calls that model, not a fixed default — unless
+    // Auto-route is on, in which case the Edge Function ignores this and
+    // picks each agent's model itself from risk keywords + scope size.
     var agentModels = {};
     AGENTS.forEach(function (a) { agentModels[a.id] = a.model; });
+    var autoRoute = document.getElementById("auto-route-toggle").checked;
 
     var response;
     try {
-      response = await Aiven.orchestrate(objective, depts, srcs, agentModels);
+      response = await Aiven.orchestrate(objective, depts, srcs, agentModels, autoRoute);
     } catch (err) {
       loadingEl.remove();
       document.getElementById("timeline-empty").style.display = "";
@@ -1039,6 +1067,19 @@
       if (subs.length) {
         var subText = subs.map(function (s) { return s.agentName + " (" + s.requested + " → " + s.used + ")"; }).join(", ");
         toast((subs.length === 1 ? "1 agent" : subs.length + " agents") + " requested a model with no key configured — ran on: " + subText);
+      }
+
+      var routing = response.routing;
+      if (routing && routing.mode === "auto") {
+        var tierDesc = {
+          baseline: "Baseline (Haiku for routine pulls, Sonnet for synthesis)",
+          elevated: "Elevated (Sonnet across the board, Opus on Risk & Compliance)",
+          high: "High-stakes (Opus on Risk, Strategy, and the Writer)"
+        }[routing.tier] || routing.tier;
+        var why = routing.matchedKeywords && routing.matchedKeywords.length
+          ? "risk keywords matched: " + routing.matchedKeywords.join(", ")
+          : "scope size " + routing.complexityScore + " department(s)+source(s), no risk keywords matched";
+        toast("Auto-routed to the " + tierDesc + " tier — " + why + ".");
       }
 
       Aiven.addAudit({
