@@ -174,7 +174,12 @@
   }
 
   /* ---------------- real model call (requires sign-in) ---------------- */
-  async function orchestrate(objective, departments, sources) {
+  // agentModels: optional { [agentId]: "Claude Sonnet 5" | "Claude Opus 4.8" | ... }
+  // reflecting the Command Center's per-agent model dropdown — the Edge
+  // Function routes each agent's real call to whichever Claude model that
+  // label maps to, falling back (with a note in response.substitutions)
+  // for labels with no real key configured (GPT-4o, Gemini 1.5 Pro).
+  async function orchestrate(objective, departments, sources, agentModels) {
     await ready;
     var session = (await sb.auth.getSession()).data.session;
     var token = session ? session.access_token : SUPABASE_ANON_KEY;
@@ -185,13 +190,13 @@
         "apikey": SUPABASE_ANON_KEY,
         "authorization": "Bearer " + token
       },
-      body: JSON.stringify({ objective: objective, departments: departments, sources: sources })
+      body: JSON.stringify({ objective: objective, departments: departments, sources: sources, agentModels: agentModels || {} })
     });
     var body = await resp.json().catch(function () { return {}; });
     if (!resp.ok || body.error) {
       throw new Error(body.error || ("Orchestration request failed (" + resp.status + ")"));
     }
-    return body; // { result, model, usage }
+    return body; // { result, model, usage, substitutions }
   }
 
   // Reads the caller's own workspace's rolling-24h Orchestrate usage

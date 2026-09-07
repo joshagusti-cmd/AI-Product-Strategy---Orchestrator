@@ -9,14 +9,17 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // (the Writer) also synthesizes the run's executive summary, findings,
 // recommendations, and risk flags from everything before it.
 //
-// Model per agent is fixed server-side (see AGENT_DEFS below), not
-// driven by the Command Center's per-agent model dropdown yet — wiring
-// that selector to real per-call routing is the still-open "cost-based
-// automatic model routing" backlog item. Two agents (Finance, Strategy)
-// are labeled "GPT-4o" elsewhere in the product's original illustrative
-// design; since only an Anthropic key is configured, they run on Claude
-// Sonnet 5 here — the Command Center's local agent labels were updated
-// to match so the UI never claims a provider it isn't actually calling.
+// Model per agent is real per-call routing, driven by the Command
+// Center's per-agent model dropdown: the frontend sends its current
+// `agentModels` selections (display labels, e.g. "Claude Opus 4.8") and
+// each agent's call uses whichever real Claude model that label maps to
+// (see MODEL_LABEL_TO_ID below). AGENT_DEFS' `model`/`label` are just
+// the default routing when the caller sends no override. Two of the
+// four dropdown options (GPT-4o, Gemini 1.5 Pro) aren't real — only an
+// Anthropic key is configured — so a request for either falls back to
+// that agent's Claude default and the response's `substitutions` array
+// tells the frontend exactly what ran instead, so the UI never silently
+// claims a provider it isn't actually calling.
 //
 // Also enforces a per-workspace rolling 24h spend cap (each workspace's
 // `daily_orchestrate_limit`, default 20) using the service role key —
@@ -33,17 +36,38 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-// The six Command Center agents, in execution order. `model` is a real
-// Anthropic model id — Opus 4.8 for the highest-stakes step (governance
-// risk screening), Sonnet 5 for everything else.
+// The six Command Center agents, in execution order. `model`/`label` are
+// the default routing — Opus 4.8 for the highest-stakes step (governance
+// risk screening), Sonnet 5 for everything else — used whenever the
+// caller doesn't override an agent via `agentModels` in the request body.
 const AGENT_DEFS = [
-  { id: "research", name: "Research & Data Agent", model: "claude-sonnet-5", role: "pulls and reconciles data across connected systems" },
-  { id: "finance", name: "Finance Agent", model: "claude-sonnet-5", role: "analyzes cost structure, margin, and variance" },
-  { id: "ops", name: "Operations Agent", model: "claude-sonnet-5", role: "maps process cycle times and bottlenecks" },
-  { id: "risk", name: "Risk & Compliance Agent", model: "claude-opus-4-8", role: "screens findings against governance policy; must flag exactly one realistic governance/compliance risk that would require human approval before anything ships externally" },
-  { id: "strategy", name: "Strategy Agent", model: "claude-sonnet-5", role: "synthesizes findings into prioritized recommendations" },
-  { id: "writer", name: "Executive Writer Agent", model: "claude-sonnet-5", role: "drafts the final executive-ready action plan" },
+  { id: "research", name: "Research & Data Agent", model: "claude-sonnet-5", label: "Claude Sonnet 5", role: "pulls and reconciles data across connected systems" },
+  { id: "finance", name: "Finance Agent", model: "claude-sonnet-5", label: "Claude Sonnet 5", role: "analyzes cost structure, margin, and variance" },
+  { id: "ops", name: "Operations Agent", model: "claude-sonnet-5", label: "Claude Sonnet 5", role: "maps process cycle times and bottlenecks" },
+  { id: "risk", name: "Risk & Compliance Agent", model: "claude-opus-4-8", label: "Claude Opus 4.8", role: "screens findings against governance policy; must flag exactly one realistic governance/compliance risk that would require human approval before anything ships externally" },
+  { id: "strategy", name: "Strategy Agent", model: "claude-sonnet-5", label: "Claude Sonnet 5", role: "synthesizes findings into prioritized recommendations" },
+  { id: "writer", name: "Executive Writer Agent", model: "claude-sonnet-5", label: "Claude Sonnet 5", role: "drafts the final executive-ready action plan" },
 ] as const;
+
+// Real Claude model each dropdown label maps to. The dropdown also
+// offers "GPT-4o" and "Gemini 1.5 Pro" (illustrative multi-provider
+// options from the original design) — neither has a real key configured,
+// so they're deliberately absent here and any request for them falls
+// back to the agent's default (see resolveAgentModel below).
+const MODEL_LABEL_TO_ID: Record<string, string> = {
+  "Claude Sonnet 5": "claude-sonnet-5",
+  "Claude Opus 4.8": "claude-opus-4-8",
+};
+
+function resolveAgentModel(agent: (typeof AGENT_DEFS)[number], requestedLabel: unknown) {
+  if (typeof requestedLabel === "string" && MODEL_LABEL_TO_ID[requestedLabel]) {
+    return { modelId: MODEL_LABEL_TO_ID[requestedLabel], label: requestedLabel };
+  }
+  const substitution = typeof requestedLabel === "string" && requestedLabel !== agent.label
+    ? { agentId: agent.id, agentName: agent.name, requested: requestedLabel, used: agent.label }
+    : null;
+  return { modelId: agent.model, label: agent.label, substitution };
+}
 
 // Tool schema for the five non-writer agents — just this agent's own
 // step. `riskFlag` is only ever populated by the risk agent (enforced
@@ -280,12 +304,13 @@ Deno.serve(async (req: Request) => {
     return json({ error: rateLimitError.error }, rateLimitError.status);
   }
 
-  let objective: string, departments: string[], sources: string[];
+  let objective: string, departments: string[], sources: string[], agentModels: Record<string, unknown>;
   try {
     const body = await req.json();
     objective = body.objective;
     departments = Array.isArray(body.departments) ? body.departments : [];
     sources = Array.isArray(body.sources) ? body.sources : [];
+    agentModels = body.agentModels && typeof body.agentModels === "object" ? body.agentModels : {};
   } catch {
     return json({ error: "Invalid JSON body." }, 400);
   }
@@ -307,6 +332,7 @@ Deno.serve(async (req: Request) => {
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   const modelsUsed = new Set<string>();
+  const substitutions: Array<{ agentId: string; agentName: string; requested: string; used: string }> = [];
 
   try {
     for (const agent of AGENT_DEFS) {
@@ -322,10 +348,13 @@ Deno.serve(async (req: Request) => {
 
       const user = `${briefing}\n\n${priorContext}`;
 
+      const routed = resolveAgentModel(agent, agentModels[agent.id]);
+      if (routed.substitution) substitutions.push(routed.substitution);
+
       const result = await callAgent({
         apiKey,
         agentName: agent.name,
-        model: agent.model,
+        model: routed.modelId,
         system,
         user,
         tool: isWriter ? FINAL_TOOL : STEP_TOOL,
@@ -355,6 +384,7 @@ Deno.serve(async (req: Request) => {
           },
           model: Array.from(modelsUsed).join(" · "),
           usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens },
+          substitutions,
         });
       }
 
