@@ -11,7 +11,7 @@ Input to the Horizon mapping in `roadmap.md`. Constructed from `feature-ideas.md
 | Fix Domain Context Loop scoring inconsistency | Bug | P1 | Planned | The Moat | data-quality |
 | Verify kill-switch failover with a live drill | Task | P1 | Planned | The Moat | reliability, ops |
 | Validate pricing model with real buyer conversations | Task | P0 | Planned | The Margin | pricing, research |
-| Run a real Shadow AI Audit (replace illustrative placeholder) | Task | P1 | Planned | The Guardrails | governance, audit |
+| Run a real Shadow AI Audit (replace illustrative placeholder) | Task | P1 | Planned — the prototype's scan mechanism itself is now real (Done: `shadow-ai.html` scans real Agent Registry drift + real Orchestrate substitution telemetry, not fictional findings); a real audit of outside tool use still needs a real design partner + endpoint/CASB integration, which is this row's remaining scope | The Guardrails | governance, audit |
 | Ship Killer-tier dispute generator to production (two-gate approval live) | Epic | P0 | Backlog | The Contract | core, hitl |
 | Build Cross-Domain Transfer loop into AML scoring | Epic | P1 | Backlog | The Moat | data-flywheel, expansion |
 | Formal EU AI Act / GDPR legal review | Task | P0 | Backlog | The Guardrails | compliance, legal |

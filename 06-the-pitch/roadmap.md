@@ -13,7 +13,7 @@
 | Close the Network Intelligence feedback loop, and fix the Domain Context Loop scoring inconsistency while we're in that file | Loop status flips missing → active; Total Flywheel Score corrected and rising from 18/20 | M |
 | Move kill-switch readiness from architecture to a verified drill | Confirmed <48h secondary-provider swap under real load, not just on paper | H |
 | Validate the pricing model in real buyer conversations | Signed design-partner agreement at or near the $101.50/user/month modeled price | M |
-| Run a real Shadow AI Audit at the design partner, replacing the illustrative placeholder in `05-the-guardrails/compounding-system.md` | Real tools-found / triaged / hidden-spend numbers on record | H |
+| Run a real Shadow AI Audit at the design partner, replacing the illustrative placeholder in `05-the-guardrails/compounding-system.md` — ~~the prototype's "Run Shadow AI Scan" simulated discovery~~ **now does a real scan** of the platform's own data (Agent Registry drift + real Orchestrate substitution telemetry, `01-the-bet/prototype/shadow-ai.html`); a real audit of outside tool use (personal accounts, browser extensions) still needs a real design partner and real endpoint/CASB integration — that's this GTM step, not further engineering | Real tools-found / triaged / hidden-spend numbers on record | H |
 
 ### Horizon 2 — Next (3-9 months)
 *Bets. Requires new capabilities or integrations.*

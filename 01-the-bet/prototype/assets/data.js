@@ -402,14 +402,19 @@
   // Real, measured Orchestrate spend: one row per individual agent call
   // (migrations/0010_real_spend_telemetry.sql), with the real model and
   // real token counts Anthropic actually billed — not a modeled figure.
+  // `requested_model` (migrations/0012) is set only when the call asked
+  // for a model with no real key configured and got silently
+  // substituted — the Shadow AI Audit's real discovery scan reads that
+  // same field to find genuine ungoverned-model requests, not just the
+  // Spend Dashboard's real cost breakdown this was originally added for.
   // Returns null for the read-only demo workspace (Orchestrate never
   // runs there, so there's nothing measured to show). Most-recent-first,
-  // capped at 2000 rows — plenty for this prototype's spend dashboard.
+  // capped at 2000 rows — plenty for this prototype.
   async function getRealSpend() {
     await ready;
     if (currentWorkspaceId === DEMO_WORKSPACE_ID) return null;
     var r = await sb.from("orchestrate_call_log")
-      .select("agent_id, model, input_tokens, output_tokens, called_at")
+      .select("agent_id, model, requested_model, input_tokens, output_tokens, called_at")
       .eq("workspace_id", currentWorkspaceId)
       .order("called_at", { ascending: false })
       .limit(2000);

@@ -48,6 +48,14 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // panel). Rejecting it ends the run for real: no executive deliverable
 // is ever generated. See shouldPauseForPolicy/createPendingApproval/
 // handleResume below, and migrations/0011_policy_gated_approvals.sql.
+//
+// Every silent substitution above (a request for a model with no real
+// key configured) also leaves a real trace, not just the frontend's
+// toast: logCall records the originally-requested label alongside what
+// actually ran (migrations/0012), so the Shadow AI Audit's discovery
+// scan can find real, repeated requests for an ungoverned model —
+// genuine unmanaged-tool-use signal from this workspace's own real
+// telemetry, not a fixed list of fictional findings.
 
 // Objective text and scope size are the only signals available before
 // any agent has run — this is a real, cheap, explainable heuristic, not
@@ -298,12 +306,19 @@ async function recordUsage(workspaceId: string, userId: string) {
 // those tokens were still really billed by Anthropic the moment the
 // call returned. Distinct from recordUsage above, which only fires once
 // per successful run and exists purely for the rate-limit check.
+//
+// `requestedModel` is set only when the caller asked for a label with
+// no real key configured (e.g. "GPT-4o") and got silently substituted
+// — a real, queryable trace of ungoverned model *requests*, not just
+// the toast the frontend shows in the moment. Powers the Shadow AI
+// Audit's real discovery scan (migrations/0012).
 async function logCall(
   workspaceId: string,
   userId: string,
   agentId: string,
   model: string,
   usage: { input_tokens?: number; output_tokens?: number } | undefined,
+  requestedModel: string | null,
 ) {
   try {
     await serviceRoleFetch("orchestrate_call_log", {
@@ -315,6 +330,7 @@ async function logCall(
         model,
         input_tokens: usage?.input_tokens || 0,
         output_tokens: usage?.output_tokens || 0,
+        requested_model: requestedModel,
       }),
     });
   } catch (err) {
@@ -499,7 +515,10 @@ async function runOneAgent(agent: (typeof AGENT_DEFS)[number], ctx: RunCtx): Pro
   ctx.totalOutputTokens += result.usage?.output_tokens || 0;
   ctx.modelsUsed.add(result.model || agent.model);
 
-  await logCall(ctx.workspaceId, ctx.userId, agent.id, result.model || routed.modelId, result.usage);
+  await logCall(
+    ctx.workspaceId, ctx.userId, agent.id, result.model || routed.modelId, result.usage,
+    routed.substitution ? routed.substitution.requested : null,
+  );
 
   if (isWriter) {
     const out = result.input || {};
