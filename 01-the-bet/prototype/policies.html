@@ -89,22 +89,24 @@
 
   function renderGrid() {
     var grid = document.getElementById("policy-grid");
+    var canEdit = Aiven.auth.isComplianceOwner();
+    var dis = canEdit ? "" : " disabled";
     grid.innerHTML = state.policies.map(function (p) {
       return "<div class='panel policy-card' data-id='" + p.id + "'>" +
         "<div class='panel-head'><div><h2>" + p.label + "</h2><div class='hint'>Tier: <span class='tier-pill " + p.tier + "' style='margin-left:4px;'>" + p.tier + "</span></div></div></div>" +
         "<div class='panel-body'>" +
         "<div class='field'><span class='field-label'>Autonomy level</span>" +
-        "<select class='control autonomy-select'>" +
+        "<select class='control autonomy-select'" + dis + ">" +
         AUTONOMY.map(function (a) { return "<option" + (a === p.autonomy ? " selected" : "") + ">" + a + "</option>"; }).join("") +
         "</select></div>" +
         "<div class='field'><span class='field-label'>Escalation risk threshold</span>" +
-        "<div class='threshold-row'><input type='range' class='control threshold-range' min='0' max='100' value='" + p.riskThreshold + "'>" +
+        "<div class='threshold-row'><input type='range' class='control threshold-range' min='0' max='100' value='" + p.riskThreshold + "'" + dis + ">" +
         "<span class='threshold-val tabular'>" + p.riskThreshold + "</span></div>" +
         "<div class='field-hint'>A score at or above this crosses into escalation for this tier.</div></div>" +
         "<div class='field'><span class='field-label'>Escalation rule</span>" +
-        "<textarea class='control escalation-text' rows='3'>" + p.escalation + "</textarea></div>" +
+        "<textarea class='control escalation-text' rows='3'" + dis + ">" + p.escalation + "</textarea></div>" +
         "<div class='policy-foot'><span class='updated mono'>Last updated " + p.updatedAt + "</span>" +
-        "<button class='btn primary save-policy' type='button'>Save policy</button></div>" +
+        "<button class='btn primary save-policy' type='button'" + (canEdit ? "" : " disabled title='Only admins and compliance owners can edit policy'") + ">Save policy</button></div>" +
         "</div></div>";
     }).join("");
 

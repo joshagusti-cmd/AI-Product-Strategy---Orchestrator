@@ -113,6 +113,32 @@
     }
   }
 
+  /* ---------------- RBAC ---------------- */
+  // Three roles, matching the governance model in
+  // 05-the-guardrails/compounding-system.md. Enforced for real at the
+  // RLS layer (migrations/0008) — this mirror is for the UI to
+  // hide/disable controls a caller can't use, not the source of truth.
+  var ROLE_LABELS = { admin: "Admin", compliance_owner: "Compliance Owner", analyst: "Analyst" };
+  function roleLabel(role) { return ROLE_LABELS[role] || role; }
+  function getRole() {
+    var ws = currentWorkspaces.find(function (w) { return w.id === currentWorkspaceId; });
+    return ws ? ws.role : null;
+  }
+  function isAdmin() { return getRole() === "admin"; }
+  function isComplianceOwner() { return getRole() === "admin" || getRole() === "compliance_owner"; }
+
+  // RLS silently filters an UPDATE/DELETE a caller's role doesn't
+  // permit — no rows change, but (unlike an INSERT's WITH CHECK) no
+  // error is raised either. Call this after a gated update/delete
+  // (with .select() chained so `rows` reflects what actually changed)
+  // to turn "0 rows, no error" into a real, catchable permission error
+  // instead of a false-success toast.
+  function assertRowsChanged(rows, action) {
+    if (!rows || !rows.length) {
+      throw new Error("You don't have permission to " + action + " — ask a workspace admin.");
+    }
+  }
+
   /* ---------------- mapping: DB rows -> the shape the pages expect ---------------- */
   function mapPolicy(row) {
     return {
@@ -162,22 +188,29 @@
   }
 
   /* ---------------- writes (all scoped to the caller's own workspace) ---------------- */
+  // Admin only (RLS: migrations/0008) — .select() so a 0-row result
+  // (RLS silently blocked it) can be turned into a real error below.
   async function updateAgentModel(id, model) {
     requireOwnWorkspace();
     var r = await sb.from("agents").update({ model: model, updated_at: new Date().toISOString() })
-      .eq("workspace_id", currentWorkspaceId).eq("id", id);
+      .eq("workspace_id", currentWorkspaceId).eq("id", id).select();
     if (r.error) throw r.error;
+    assertRowsChanged(r.data, "reassign an agent's model — only workspace admins can");
   }
 
+  // Admin or Compliance Owner only (RLS: migrations/0008).
   async function savePolicy(id, patch) {
     requireOwnWorkspace();
     var r = await sb.from("policies").update({
       autonomy: patch.autonomy, risk_threshold: patch.riskThreshold, escalation: patch.escalation,
       updated_at: new Date().toISOString()
-    }).eq("workspace_id", currentWorkspaceId).eq("id", id);
+    }).eq("workspace_id", currentWorkspaceId).eq("id", id).select();
     if (r.error) throw r.error;
+    assertRowsChanged(r.data, "edit policy — only admins and compliance owners can");
   }
 
+  // Open to any workspace member — approving/rejecting is a core
+  // analyst workflow, not restricted by role.
   async function decideApproval(id, decision) {
     requireOwnWorkspace();
     var r = await sb.from("approvals").update({ status: decision, decided_at: new Date().toISOString() })
@@ -185,11 +218,15 @@
     if (r.error) throw r.error;
   }
 
+  // Admin or Compliance Owner only (RLS: migrations/0008) — an analyst
+  // can still discover/log a new finding via addShadowTool below, just
+  // not decide one (separation of duties).
   async function decideShadowTool(id, decision) {
     requireOwnWorkspace();
     var r = await sb.from("shadow_tools").update({ decision: decision })
-      .eq("workspace_id", currentWorkspaceId).eq("id", id);
+      .eq("workspace_id", currentWorkspaceId).eq("id", id).select();
     if (r.error) throw r.error;
+    assertRowsChanged(r.data, "govern/kill a Shadow AI finding — only admins and compliance owners can");
   }
 
   async function addShadowTool(tool) {
@@ -232,27 +269,43 @@
     return { members: membersRes.data || [], invites: invitesRes.data || [] };
   }
 
-  async function inviteTeammate(email) {
+  // Admin only (RLS: migrations/0008) — an INSERT whose WITH CHECK
+  // fails raises a real Postgres error, so no assertRowsChanged needed
+  // here the way the UPDATE/DELETE actions below need it.
+  async function inviteTeammate(email, role) {
     requireOwnWorkspace();
     var r = await sb.from("workspace_invites").insert({
-      workspace_id: currentWorkspaceId, email: email, invited_by: currentUser.id
+      workspace_id: currentWorkspaceId, email: email, role: role || "analyst", invited_by: currentUser.id
     });
     if (r.error) throw r.error;
   }
 
+  // Admin only (RLS: migrations/0008).
   async function revokeInvite(id) {
     requireOwnWorkspace();
-    var r = await sb.from("workspace_invites").delete().eq("id", id).eq("workspace_id", currentWorkspaceId);
+    var r = await sb.from("workspace_invites").delete().eq("id", id).eq("workspace_id", currentWorkspaceId).select();
     if (r.error) throw r.error;
+    assertRowsChanged(r.data, "revoke an invite — only workspace admins can");
   }
 
-  // Removing yourself ("leave workspace") isn't supported — RLS blocks
-  // it outright (see migrations/0007) — so this is only ever called on
-  // a different member.
+  // Admin only (RLS: migrations/0008). Removing yourself ("leave
+  // workspace") isn't supported — RLS blocks it outright — so this is
+  // only ever called on a different member.
   async function removeMember(userId) {
     requireOwnWorkspace();
-    var r = await sb.from("workspace_members").delete().eq("workspace_id", currentWorkspaceId).eq("user_id", userId);
+    var r = await sb.from("workspace_members").delete()
+      .eq("workspace_id", currentWorkspaceId).eq("user_id", userId).select();
     if (r.error) throw r.error;
+    assertRowsChanged(r.data, "remove a teammate — only workspace admins can");
+  }
+
+  // Admin only, and never on yourself (RLS: migrations/0008).
+  async function changeMemberRole(userId, role) {
+    requireOwnWorkspace();
+    var r = await sb.from("workspace_members").update({ role: role })
+      .eq("workspace_id", currentWorkspaceId).eq("user_id", userId).select();
+    if (r.error) throw r.error;
+    assertRowsChanged(r.data, "change a teammate's role — only workspace admins can");
   }
 
   /* ---------------- real model call (requires sign-in) ---------------- */
@@ -328,32 +381,48 @@
     var el = document.getElementById("aiven-team-modal-overlay");
     if (el) el.remove();
   }
-  function renderTeamBody(body, team) {
+  var ROLE_OPTIONS = ["admin", "compliance_owner", "analyst"];
+  function roleSelectHtml(idAttr, valueAttr, selected) {
+    return "<select class='control team-role-select' " + idAttr + " " + valueAttr + ">" +
+      ROLE_OPTIONS.map(function (r) { return "<option value='" + r + "'" + (r === selected ? " selected" : "") + ">" + roleLabel(r) + "</option>"; }).join("") +
+      "</select>";
+  }
+  function renderTeamBody(body, team, myRole) {
+    var amAdmin = myRole === "admin";
     var membersHtml = team.members.map(function (m) {
       var mine = currentUser && m.user_id === currentUser.id;
-      return "<div class='team-row'><div><span class='team-email'>" + m.email + (mine ? " (you)" : "") + "</span>" +
-        "<span class='team-role'>" + m.role + "</span></div>" +
-        (mine ? "" : "<button class='btn small ghost' data-remove-member='" + m.user_id + "' type='button'>Remove</button>") +
+      var roleDisplay = amAdmin && !mine
+        ? roleSelectHtml("data-role-member='" + m.user_id + "'", "", m.role)
+        : "<span class='team-role'>" + roleLabel(m.role) + "</span>";
+      return "<div class='team-row'><div><span class='team-email'>" + m.email + (mine ? " (you)" : "") + "</span>" + roleDisplay + "</div>" +
+        (amAdmin && !mine ? "<button class='btn small ghost' data-remove-member='" + m.user_id + "' type='button'>Remove</button>" : "") +
         "</div>";
     }).join("") || "<p class='muted'>No members yet.</p>";
 
     var invitesHtml = team.invites.map(function (inv) {
-      return "<div class='team-row'><div><span class='team-email'>" + inv.email + "</span><span class='team-role'>pending</span></div>" +
-        "<button class='btn small ghost' data-revoke-invite='" + inv.id + "' type='button'>Revoke</button></div>";
+      return "<div class='team-row'><div><span class='team-email'>" + inv.email + "</span>" +
+        "<span class='team-role'>" + roleLabel(inv.role) + " · pending</span></div>" +
+        (amAdmin ? "<button class='btn small ghost' data-revoke-invite='" + inv.id + "' type='button'>Revoke</button>" : "") +
+        "</div>";
     }).join("") || "<p class='muted'>No pending invites.</p>";
+
+    var inviteFormHtml = amAdmin
+      ? "<div class='team-section'><h4>Invite a teammate</h4>" +
+        "<div class='team-invite-form'>" +
+        "<input class='control' id='aiven-invite-email' type='email' placeholder='teammate@company.com' autocomplete='email'>" +
+        roleSelectHtml("id='aiven-invite-role'", "", "analyst") +
+        "<button class='btn small' id='aiven-invite-btn' type='button'>Send invite</button>" +
+        "</div>" +
+        "<p class='hint'>They'll join this workspace automatically the next time they sign in with that email — no separate accept step.</p>" +
+        "</div>"
+      : "<p class='muted'>Only workspace admins can invite, remove, or change roles. Ask an admin (" + roleLabel("admin") + ") on this list.</p>";
 
     body.innerHTML =
       "<div class='team-section'><h4>Members</h4>" + membersHtml + "</div>" +
       "<div class='team-section'><h4>Pending invites</h4>" + invitesHtml + "</div>" +
-      "<div class='team-section'><h4>Invite a teammate</h4>" +
-      "<div class='team-invite-form'>" +
-      "<input class='control' id='aiven-invite-email' type='email' placeholder='teammate@company.com' autocomplete='email'>" +
-      "<button class='btn small' id='aiven-invite-btn' type='button'>Send invite</button>" +
-      "</div>" +
-      "<p class='hint'>They'll join this workspace automatically the next time they sign in with that email — no separate accept step.</p>" +
-      "</div>";
+      inviteFormHtml;
 
-    async function refresh() { renderTeamBody(body, await listTeam()); }
+    async function refresh() { renderTeamBody(body, await listTeam(), myRole); }
 
     body.querySelectorAll("[data-remove-member]").forEach(function (btn) {
       btn.addEventListener("click", async function () {
@@ -370,26 +439,39 @@
         catch (e) { toast("Failed to revoke: " + e.message); btn.disabled = false; }
       });
     });
+    body.querySelectorAll("[data-role-member]").forEach(function (sel) {
+      var original = sel.value;
+      sel.addEventListener("change", async function () {
+        var userId = sel.getAttribute("data-role-member");
+        var newRole = sel.value;
+        sel.disabled = true;
+        try { await changeMemberRole(userId, newRole); toast("Role updated to " + roleLabel(newRole) + "."); await refresh(); }
+        catch (e) { toast("Failed to change role: " + e.message); sel.value = original; sel.disabled = false; }
+      });
+    });
 
-    var inviteBtn = body.querySelector("#aiven-invite-btn");
-    var inviteInput = body.querySelector("#aiven-invite-email");
-    var submitInvite = async function () {
-      var email = inviteInput.value.trim();
-      if (!email) { toast("Enter an email address first."); return; }
-      inviteBtn.disabled = true;
-      try {
-        await inviteTeammate(email);
-        toast("Invited " + email + " — they'll join automatically on their next sign-in.");
-        inviteInput.value = "";
-        await refresh();
-      } catch (e) {
-        toast("Invite failed: " + e.message);
-      } finally {
-        inviteBtn.disabled = false;
-      }
-    };
-    inviteBtn.addEventListener("click", submitInvite);
-    inviteInput.addEventListener("keydown", function (e) { if (e.key === "Enter") submitInvite(); });
+    if (amAdmin) {
+      var inviteBtn = body.querySelector("#aiven-invite-btn");
+      var inviteInput = body.querySelector("#aiven-invite-email");
+      var inviteRole = body.querySelector("#aiven-invite-role");
+      var submitInvite = async function () {
+        var email = inviteInput.value.trim();
+        if (!email) { toast("Enter an email address first."); return; }
+        inviteBtn.disabled = true;
+        try {
+          await inviteTeammate(email, inviteRole.value);
+          toast("Invited " + email + " as " + roleLabel(inviteRole.value) + " — they'll join automatically on their next sign-in.");
+          inviteInput.value = "";
+          await refresh();
+        } catch (e) {
+          toast("Invite failed: " + e.message);
+        } finally {
+          inviteBtn.disabled = false;
+        }
+      };
+      inviteBtn.addEventListener("click", submitInvite);
+      inviteInput.addEventListener("keydown", function (e) { if (e.key === "Enter") submitInvite(); });
+    }
   }
   async function openTeamModal() {
     closeTeamModal();
@@ -407,7 +489,7 @@
     overlay.querySelector(".aiven-modal-close").addEventListener("click", closeTeamModal);
     var body = overlay.querySelector("#aiven-team-body");
     try {
-      renderTeamBody(body, await listTeam());
+      renderTeamBody(body, await listTeam(), getRole());
     } catch (e) {
       body.innerHTML = "<p class='muted'>Failed to load team: " + e.message + "</p>";
     }
@@ -571,13 +653,17 @@
       isDemo: isDemo,
       onChange: onAuthChange,
       getWorkspaces: getWorkspaces,
-      switchWorkspace: switchWorkspace
+      switchWorkspace: switchWorkspace,
+      getRole: getRole,
+      isAdmin: isAdmin,
+      isComplianceOwner: isComplianceOwner
     },
     team: {
       list: listTeam,
       invite: inviteTeammate,
       revokeInvite: revokeInvite,
-      removeMember: removeMember
+      removeMember: removeMember,
+      changeMemberRole: changeMemberRole
     }
   };
 })(window);

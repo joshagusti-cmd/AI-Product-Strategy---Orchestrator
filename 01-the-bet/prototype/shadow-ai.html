@@ -114,9 +114,12 @@
   function renderTable() {
     var body = document.getElementById("shadow-rows");
     body.innerHTML = state.shadowTools.map(function (t) {
+      var canDecide = Aiven.auth.isComplianceOwner();
       var decisionCell = t.decision === "undecided"
-        ? "<div class='row-actions'><button class='btn ghost approve small' data-id='" + t.id + "' data-decision='govern'>Govern</button>" +
-          "<button class='btn ghost reject small' data-id='" + t.id + "' data-decision='kill'>Kill</button></div>"
+        ? (canDecide
+          ? "<div class='row-actions'><button class='btn ghost approve small' data-id='" + t.id + "' data-decision='govern'>Govern</button>" +
+            "<button class='btn ghost reject small' data-id='" + t.id + "' data-decision='kill'>Kill</button></div>"
+          : "<span class='muted' style='font-size:11px;' title='Only admins and compliance owners can decide'>Awaiting compliance owner</span>")
         : "<span class='decision-pill " + t.decision + "'>" + t.decision + "</span>";
       return "<tr><td class='name name-cell'>" + t.name + "</td><td>" + t.owner + "</td>" +
         "<td><span class='risk-pill " + t.risk + "'>" + t.risk + "</span></td><td>" + decisionCell + "</td>" +

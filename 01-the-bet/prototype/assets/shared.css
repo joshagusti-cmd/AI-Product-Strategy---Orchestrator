@@ -173,9 +173,14 @@ select.auth-ws-select { max-width: 150px; padding: 6px 9px; font-size: 11px; }
   display: block; font-family: var(--mono); font-size: 10px; color: var(--text-mute);
   text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px;
 }
-.team-invite-form { display: flex; gap: 8px; }
-.team-invite-form input.control { flex: 1; }
+.team-invite-form { display: flex; gap: 8px; flex-wrap: wrap; }
+.team-invite-form input.control { flex: 1; min-width: 140px; }
+.team-invite-form select.control { flex: 0 0 auto; }
 .team-section .hint { margin: 8px 0 0; font-size: 11px; color: var(--text-mute); }
+select.team-role-select {
+  padding: 3px 6px; font-size: 10px; font-family: var(--mono); text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--text-mute); margin-top: 2px; width: auto;
+}
 
 .subnav { border-bottom: 1px solid var(--border-soft); background: var(--bg-grid); }
 .subnav-inner {
