@@ -30,7 +30,7 @@ Input to the Horizon mapping in `roadmap.md`. Constructed from `feature-ideas.md
 | Workflow history / versioned deliverable archive | Story | P2 | Done (prototype) — `workflow-history.html` archives every completed Orchestrate run's full real deliverable (`orchestrate_runs`), searchable and reopenable; comparing two runs side-by-side is still open | The Bet | ux, audit |
 | Natural-language audit trail Q&A | Story | P3 | Done (prototype) — `audit.html`'s "Ask the audit trail" panel is a real Claude call grounded strictly in the workspace's real `audit_log` rows, rate-limited and its Q&A history persisted | The Contract | ux, ai-feature |
 | Mobile companion approvals view | Story | P3 | Backlog | The Guardrails | mobile, hitl |
-| Saved objective templates | Task | P3 | Backlog | The Bet | ux |
+| Saved objective templates | Task | P3 | Done (prototype) — the Command Center can save the current objective, scope, and model routing as a named template (`objective_templates`) and reload it later | The Bet | ux |
 | In-product kill-switch / vendor-portability messaging | Task | P3 | Backlog | The Moat | positioning, ux |
 
 **Unmapped items:** none — every backlog item landed in a horizon. If that changes as the real backlog grows, an item that doesn't fit any of the five components cleanly is itself a signal (either it's out of scope, or it's revealing a strategy gap the current modules don't cover).

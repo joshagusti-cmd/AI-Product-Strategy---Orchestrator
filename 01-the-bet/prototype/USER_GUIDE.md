@@ -42,6 +42,8 @@ What happens next is real: six independent Claude API calls run in sequence — 
 
 **Rate limit.** Your workspace's plan caps how many Orchestrate runs you can make per rolling 24 hours. The console shows your current usage; hitting the cap returns a clear error rather than silently failing.
 
+**Saved templates.** Running the same kind of analysis on a schedule ("do this every month")? Set up the objective, scope, and routing the way you want, type a name in the **Save as template** box, and click save. A saved template shows up in the **Load a saved template** dropdown — picking one instantly fills in the objective, department/source chips, auto-route toggle, and every per-agent model assignment exactly as you saved them, ready to click Orchestrate. Delete a template from the same dropdown once you no longer need it. Templates are shared across your whole workspace, not just your own login.
+
 ---
 
 ## Agent Registry (`agents.html`)

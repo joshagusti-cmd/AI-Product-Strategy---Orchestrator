@@ -26,6 +26,10 @@
   }
   .console-head p { margin: 4px 0 0; color: var(--text-mute); font-size: 12.5px; max-width: 60ch; }
 
+  .template-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; font-size: 12px; }
+  .template-load, .template-save { display: flex; align-items: center; gap: 8px; }
+  .template-load select { font-size: 12px; max-width: 220px; }
+  .template-save input { font-size: 12px; width: 220px; }
   .objective-row { display: flex; gap: 10px; margin-bottom: 20px; }
   .prompt-caret { font-family: var(--mono); color: var(--accent); padding-top: 10px; user-select: none; }
   textarea#objective {
@@ -236,6 +240,8 @@
     .grid-main, .grid-two { grid-template-columns: 1fr; }
     .chip-groups { grid-template-columns: 1fr; }
     .roi-stats { grid-template-columns: 1fr; }
+    .template-row { flex-direction: column; align-items: stretch; }
+    .template-load select, .template-save input { max-width: none; width: 100%; }
   }
 </style>
 </head>
@@ -283,6 +289,19 @@
       <div>
         <h1 id="console-h">&gt; Enter a business objective to orchestrate</h1>
         <p>The orchestrator decomposes your objective, assigns tasks to specialized agents, routes required approvals, and executes the workflow under governance.</p>
+      </div>
+    </div>
+
+    <div class="template-row">
+      <div class="template-load">
+        <select class="control" id="template-select" title="Load a saved objective template">
+          <option value="">Load a saved template…</option>
+        </select>
+        <button class="btn ghost small" id="template-delete" type="button" disabled title="Delete the selected template">Delete</button>
+      </div>
+      <div class="template-save">
+        <input class="control" id="template-name" type="text" placeholder="Name this objective to save as a template…">
+        <button class="btn ghost small" id="template-save-btn" type="button">Save as template</button>
       </div>
     </div>
 
@@ -789,6 +808,110 @@
   } else {
     drawNetwork();
   }
+
+  /* ---------------- saved objective templates ---------------- */
+  // Real, client-writable rows (migrations/0015_objective_templates.sql)
+  // — "run this same analysis monthly" without retyping the objective,
+  // scope, and model routing every time. templates is null for the
+  // read-only demo workspace, else an array (possibly empty).
+  var templates = null;
+
+  function renderTemplateSelect() {
+    var select = document.getElementById("template-select");
+    var deleteBtn = document.getElementById("template-delete");
+    if (templates === null) {
+      select.innerHTML = "<option value=''>Sign in to use saved templates</option>";
+      select.disabled = true;
+      deleteBtn.disabled = true;
+      return;
+    }
+    select.disabled = false;
+    select.innerHTML = "<option value=''>Load a saved template…</option>" +
+      templates.map(function (t) { return "<option value='" + t.id + "'>" + t.name + "</option>"; }).join("");
+    deleteBtn.disabled = true;
+  }
+
+  document.getElementById("template-select").addEventListener("change", function () {
+    var id = this.value;
+    document.getElementById("template-delete").disabled = !id;
+    if (!id) return;
+    var t = templates.find(function (x) { return String(x.id) === id; });
+    if (!t) return;
+
+    document.getElementById("objective").value = t.objective;
+    DEPTS.forEach(function (d) { d.on = (t.departments || []).indexOf(d.name) !== -1; });
+    SOURCES.forEach(function (s) { s.on = (t.sources || []).indexOf(s.name) !== -1; });
+    renderChips(DEPTS, document.getElementById("dept-row"));
+    renderChips(SOURCES, document.getElementById("src-row"));
+    document.getElementById("auto-route-toggle").checked = t.auto_route !== false;
+    var agentModels = t.agent_models || {};
+    AGENTS.forEach(function (a) { if (agentModels[a.id]) a.model = agentModels[a.id]; });
+    renderPerfTable();
+    buildLabels();
+    renderNetwork();
+
+    toast("Loaded template: " + t.name);
+    Aiven.touchTemplateUsed(t.id).catch(function (e) { console.error("Failed to update template last_used_at", e); });
+  });
+
+  document.getElementById("template-delete").addEventListener("click", async function () {
+    var select = document.getElementById("template-select");
+    var id = select.value;
+    if (!id) return;
+    var btn = this;
+    btn.disabled = true;
+    try {
+      await Aiven.deleteTemplate(id);
+      templates = templates.filter(function (t) { return String(t.id) !== id; });
+      renderTemplateSelect();
+      toast("Template deleted");
+    } catch (e) {
+      toast("Couldn't delete template: " + e.message);
+      btn.disabled = false;
+    }
+  });
+
+  document.getElementById("template-save-btn").addEventListener("click", async function () {
+    if (templates === null) {
+      toast("Sign in to save an objective as a template — the public demo is view-only.");
+      return;
+    }
+    var nameInput = document.getElementById("template-name");
+    var name = nameInput.value.trim();
+    if (!name) {
+      toast("Give the template a name first.");
+      return;
+    }
+    var btn = this;
+    btn.disabled = true;
+    try {
+      var agentModels = {};
+      AGENTS.forEach(function (a) { agentModels[a.id] = a.model; });
+      var saved = await Aiven.saveTemplate({
+        name: name,
+        objective: document.getElementById("objective").value,
+        departments: DEPTS.filter(function (d) { return d.on; }).map(function (d) { return d.name; }),
+        sources: SOURCES.filter(function (s) { return s.on; }).map(function (s) { return s.name; }),
+        autoRoute: document.getElementById("auto-route-toggle").checked,
+        agentModels: agentModels
+      });
+      templates.unshift(saved);
+      nameInput.value = "";
+      renderTemplateSelect();
+      toast("Saved template: " + name);
+    } catch (e) {
+      toast("Couldn't save template: " + e.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  Aiven.listTemplates().then(function (data) {
+    templates = data; // null for demo/anonymous, else an array (possibly empty)
+    renderTemplateSelect();
+  }).catch(function (e) {
+    toast("Couldn't load saved templates: " + e.message);
+  });
 
   /* ---------------- roi sparkline ---------------- */
   function drawROI(extra) {
