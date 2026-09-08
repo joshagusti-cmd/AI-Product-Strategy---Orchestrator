@@ -170,6 +170,12 @@ const STEP_TOOL = {
           severity: { type: "string", enum: ["Low", "Medium", "High"] },
           text: { type: "string" },
         },
+        // Both required together, or omit riskFlag entirely — the pause
+        // check below only fires when both are present (out.riskFlag &&
+        // out.riskFlag.text), so a schema that let severity through
+        // without text would let a real governance flag silently skip
+        // the human-approval gate.
+        required: ["severity", "text"],
       },
     },
     required: ["title", "detail"],
@@ -669,7 +675,10 @@ async function handleResume(workspaceId: string, userId: string, approvalId: str
           method: "PATCH",
           body: JSON.stringify({ resumed_at: new Date().toISOString() }),
         });
-        await recordUsage(workspaceId, userId);
+        // Usage was already recorded once, when this run paused (see the
+        // "paused" branch in the main handler below) — resuming is a
+        // continuation of that same logical run, not a second Orchestrate
+        // call, so it must not count against the daily cap twice.
         const finalModel = Array.from(ctx.modelsUsed).join(" · ");
         await recordRun(ctx, outcome.result, finalModel, true, approvalId);
         return json({
@@ -770,6 +779,12 @@ Deno.serve(async (req: Request) => {
     for (const agent of AGENT_DEFS) {
       const outcome = await runOneAgent(agent, ctx);
       if (outcome.kind === "paused") {
+        // A pause still means Research/Finance/Ops/Risk already made 4
+        // real, billed Anthropic calls — this must count against the
+        // daily cap now, not only if/when the run is later resumed
+        // (handleResume no longer records usage itself, so a run is
+        // counted exactly once regardless of whether it ever resumes).
+        await recordUsage(workspaceId, userId);
         return json({
           paused: true,
           approvalId: outcome.approvalId,
