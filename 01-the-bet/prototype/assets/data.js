@@ -422,6 +422,25 @@
     return r.data || [];
   }
 
+  // Workflow history / versioned deliverable archive: every completed
+  // Orchestrate run's full deliverable, exactly as the Edge Function
+  // produced it (migrations/0013_workflow_history.sql) — not just the
+  // one-line audit_log entry a run also leaves. Returns null for the
+  // read-only demo workspace (Orchestrate never runs there). Most-
+  // recent-first, capped at 200 — a real per-workspace archive, but this
+  // prototype doesn't paginate past that yet.
+  async function getRunHistory() {
+    await ready;
+    if (currentWorkspaceId === DEMO_WORKSPACE_ID) return null;
+    var r = await sb.from("orchestrate_runs")
+      .select("id, objective, departments, sources, auto_route, routing, steps, executive_summary, findings, recommendations, risk_flags, model, input_tokens, output_tokens, substitutions, was_paused, approval_id, created_at")
+      .eq("workspace_id", currentWorkspaceId)
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (r.error) throw r.error;
+    return r.data || [];
+  }
+
   // Admin only (RLS: the workspaces table has no client UPDATE policy at
   // all — this security-definer RPC, migrations/0009, is the sole write
   // path). Changes the enforced Orchestrate cap to the picked plan's
@@ -768,6 +787,7 @@
     resumeOrchestrate: resumeOrchestrate,
     getUsage: getUsage,
     getRealSpend: getRealSpend,
+    getRunHistory: getRunHistory,
     setPlan: setPlan,
     timeAgo: timeAgo,
     timeClock: timeClock,

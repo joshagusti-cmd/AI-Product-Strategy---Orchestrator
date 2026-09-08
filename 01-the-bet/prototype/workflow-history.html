@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workflow History — Aiven Orchestrator</title>
+<meta name="description" content="Every completed Orchestrate run's full deliverable, archived exactly as it was generated.">
+<link rel="stylesheet" href="assets/shared.css">
+<style>
+  .kpi-strip { grid-template-columns: repeat(4, 1fr); }
+  .filters { margin: 18px 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .search-box { max-width: 320px; }
+  td.objective-cell { max-width: 46ch; }
+  .paused-pill { font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 7px; border: 1px solid var(--accent-dim); color: var(--accent); display: inline-block; }
+  .run-detail { background: var(--surface-sunken); padding: 16px 20px; }
+  .run-detail h4 { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-mute); margin: 16px 0 6px; }
+  .run-detail h4:first-child { margin-top: 0; }
+  .run-detail p { font-size: 13px; line-height: 1.6; max-width: 78ch; margin: 0; }
+  .run-detail ul { margin: 0; padding-left: 20px; }
+  .run-detail ul li { font-size: 13px; line-height: 1.6; margin-bottom: 6px; max-width: 74ch; }
+  .run-detail table.data { margin-top: 2px; }
+  @media (max-width: 980px) { .kpi-strip { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body data-page="history">
+<script>document.documentElement.setAttribute("data-theme", "dark");</script>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="index.html">
+      <div class="brand-mark"></div>
+      <div class="brand-text"><span class="name">AIVEN ORCHESTRATOR</span><span class="sub">Agent governance console</span></div>
+    </a>
+    <div class="model-rail">
+      <div class="model-chip"><span class="dot"></span>Anthropic</div>
+      <div class="model-chip"><span class="dot"></span>OpenAI</div>
+      <div class="model-chip"><span class="dot"></span>Google</div>
+      <div class="status-live"><span class="dot"></span>LIVE</div>
+      <div class="auth-widget" id="auth-widget"></div>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle color theme">MODE</button>
+    </div>
+  </div>
+</div>
+<div class="subnav">
+  <div class="subnav-inner">
+    <a href="index.html" data-page="command">Command Center</a>
+    <a href="agents.html" data-page="agents">Agent Registry</a>
+    <a href="policies.html" data-page="policies">Policies</a>
+    <a href="approvals.html" data-page="approvals">Approval Queue</a>
+    <a href="audit.html" data-page="audit">Audit Trail</a>
+    <a href="workflow-history.html" data-page="history">Workflow History</a>
+    <a href="spend.html" data-page="spend">Model Spend</a>
+    <a href="shadow-ai.html" data-page="shadow">Shadow AI Audit</a>
+  </div>
+</div>
+
+<div class="shell">
+  <div class="page-head">
+    <h1>&gt; Workflow History</h1>
+    <p>Every completed Orchestrate run's full deliverable — executive summary, findings, recommendations, risk flags, and every agent step — archived exactly as it was generated, real runs only. The Audit Trail logs a one-line pointer to each run; this is the deliverable itself, still here after you've navigated away.</p>
+  </div>
+
+  <section class="kpi-strip" aria-label="Workflow history metrics">
+    <div class="kpi"><div class="eyebrow">Runs archived</div><div class="val tabular" id="kpi-total">—</div><div class="delta">this workspace, all-time</div></div>
+    <div class="kpi"><div class="eyebrow">Paused → resumed</div><div class="val tabular" id="kpi-paused">—</div><div class="delta">cleared the policy gate</div></div>
+    <div class="kpi"><div class="eyebrow">Tokens processed</div><div class="val tabular" id="kpi-tokens">—</div><div class="delta">input + output, all runs</div></div>
+    <div class="kpi"><div class="eyebrow">Most recent</div><div class="val" id="kpi-latest" style="font-size:14px;">—</div><div class="delta">run archived</div></div>
+  </section>
+
+  <div class="filters">
+    <input class="control search-box" id="search" type="search" placeholder="Search past objectives…">
+  </div>
+
+  <div class="panel" id="history-panel">
+    <div class="panel-head"><div><h2>Archive</h2><div class="hint">Newest first — click a row to view its full deliverable.</div></div></div>
+    <div class="panel-body tight scroll-x">
+      <table class="data" id="history-table">
+        <thead><tr><th></th><th>Objective</th><th>Model(s)</th><th>Tokens</th><th>Status</th><th>When</th></tr></thead>
+        <tbody id="history-rows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <span>Aiven Consulting Group — prototype build, simulated data · <button class="reset-link" id="reset-demo" type="button">Reset demo data</button></span>
+    <span id="clock" class="tabular"></span>
+  </footer>
+</div>
+
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="assets/data.js"></script>
+<script>
+(function () {
+  "use strict";
+  Aiven.initChrome();
+  var runs = [];          // null if demo/anonymous, else array of past runs
+  var query = "";
+  var openId = null;      // id of the currently expanded row, or null
+
+  function fmtInt(n) { return (n || 0).toLocaleString(); }
+
+  function renderKpis() {
+    var total = runs ? runs.length : 0;
+    document.getElementById("kpi-total").textContent = total;
+    document.getElementById("kpi-paused").textContent = runs ? runs.filter(function (r) { return r.was_paused; }).length : 0;
+    var tokens = (runs || []).reduce(function (sum, r) { return sum + (r.input_tokens || 0) + (r.output_tokens || 0); }, 0);
+    document.getElementById("kpi-tokens").textContent = fmtInt(tokens);
+    var latest = runs && runs.length ? runs[0] : null;
+    document.getElementById("kpi-latest").textContent = latest ? Aiven.timeAgo(latest.created_at) : "—";
+  }
+
+  function matches(r) {
+    if (!query) return true;
+    return r.objective.toLowerCase().indexOf(query.toLowerCase()) !== -1;
+  }
+
+  function renderDetail(r) {
+    var findings = (r.findings || []).map(function (f) { return "<li>" + f + "</li>"; }).join("") || "<li>No findings recorded.</li>";
+    var risks = (r.risk_flags || []).map(function (f) { return "<li>" + f + "</li>"; }).join("") || "<li>No risk flags recorded.</li>";
+    var recs = (r.recommendations || []).map(function (rec) {
+      return "<tr><td>" + rec.text + "</td><td>" + rec.owner + "</td><td>" + rec.nextStep + "</td><td><span class='risk-pill " + rec.priority + "'>" + rec.priority + "</span></td></tr>";
+    }).join("") || "<tr><td colspan='4'>No recommendations recorded.</td></tr>";
+    var steps = (r.steps || []).map(function (s) {
+      return "<tr><td class='name'>" + (s.agentName || s.agentId) + "</td><td>" + s.title + "</td><td>" + s.detail +
+        (s.riskFlag && s.riskFlag.text ? " <span class='risk-pill " + s.riskFlag.severity + "' style='margin-left:6px;'>" + s.riskFlag.severity + "</span>" : "") + "</td></tr>";
+    }).join("");
+    var subs = (r.substitutions || []);
+    var subsNote = subs.length
+      ? "<p style='margin-top:8px;color:var(--text-mute);font-size:11.5px;'>" + subs.length + " agent" + (subs.length === 1 ? "" : "s") + " requested a model with no real key configured and ran on a Claude substitute instead — see the Shadow AI Audit.</p>"
+      : "";
+
+    return "<div class='run-detail'>" +
+      "<h4>Executive summary</h4><p>" + (r.executive_summary || "") + "</p>" +
+      "<h4>Key findings</h4><ul>" + findings + "</ul>" +
+      "<h4>Recommendations</h4><table class='data'><thead><tr><th>Recommendation</th><th>Owner</th><th>Next step</th><th>Priority</th></tr></thead><tbody>" + recs + "</tbody></table>" +
+      "<h4>Risk flags</h4><ul>" + risks + "</ul>" +
+      "<h4>Per-agent steps</h4><table class='data'><thead><tr><th>Agent</th><th>Title</th><th>Detail</th></tr></thead><tbody>" + steps + "</tbody></table>" +
+      subsNote +
+      "</div>";
+  }
+
+  function renderTable() {
+    var body = document.getElementById("history-rows");
+
+    if (runs === null) {
+      body.innerHTML = "<tr><td colspan='6'><div class='empty-state'>Sign in and run Orchestrate from the <a href='index.html'>Command Center</a> to start building your workspace's real workflow history. The public demo is view-only, so there's nothing archived here yet.</div></td></tr>";
+      return;
+    }
+
+    var rows = runs.filter(matches);
+    if (!rows.length) {
+      body.innerHTML = "<tr><td colspan='6'><div class='empty-state'>" + (runs.length ? "No past runs match your search." : "No completed Orchestrate runs yet — run one from the Command Center and it'll show up here.") + "</div></td></tr>";
+      return;
+    }
+
+    body.innerHTML = rows.map(function (r) {
+      var status = r.was_paused
+        ? "<span class='paused-pill'>Paused → resumed</span>"
+        : "<span class='muted' style='font-size:11px;'>Completed</span>";
+      var isOpen = openId === r.id;
+      var mainRow = "<tr class='history-row' data-id='" + r.id + "' style='cursor:pointer;'>" +
+        "<td class='mono' style='width:18px;'>" + (isOpen ? "▾" : "▸") + "</td>" +
+        "<td class='name objective-cell'>" + r.objective + "</td>" +
+        "<td class='mono'>" + (r.model || "—") + "</td>" +
+        "<td class='tabular'>" + fmtInt((r.input_tokens || 0) + (r.output_tokens || 0)) + "</td>" +
+        "<td>" + status + "</td>" +
+        "<td class='mono' title='" + new Date(r.created_at).toLocaleString() + "'>" + Aiven.timeAgo(r.created_at) + "</td></tr>";
+      var detailRow = isOpen ? "<tr><td colspan='6' style='padding:0;'>" + renderDetail(r) + "</td></tr>" : "";
+      return mainRow + detailRow;
+    }).join("");
+
+    Array.prototype.forEach.call(body.querySelectorAll(".history-row"), function (tr) {
+      tr.addEventListener("click", function () {
+        var id = tr.dataset.id;
+        openId = openId === id ? null : id;
+        renderTable();
+      });
+    });
+  }
+
+  document.getElementById("search").addEventListener("input", function (e) {
+    query = e.target.value;
+    renderTable();
+  });
+
+  Aiven.getRunHistory().then(function (data) {
+    runs = data; // null for demo/anonymous, else an array (possibly empty)
+    renderKpis();
+    renderTable();
+  }).catch(function (e) {
+    Aiven.toast("Couldn't load workflow history: " + e.message);
+  });
+})();
+</script>
+</body>
+</html>

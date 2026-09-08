@@ -4,7 +4,7 @@ Running list of ideas surfaced while building the prototype that are out of scop
 
 ## Product surface
 - Per-department drill-down analytics (click a KPI tile → filtered view scoped to that department's agents/workflows)
-- Workflow history / versioned deliverable archive (compare this quarter's action plan to last quarter's)
+- ~~Workflow history / versioned deliverable archive~~ — **built**: `01-the-bet/prototype/workflow-history.html` archives every completed Orchestrate run's full deliverable in real Postgres (`orchestrate_runs`, `01-the-bet/prototype/supabase/migrations/0013_workflow_history.sql`) — not just the Audit Trail's one-line pointer, and not just what's still in the browser tab that ran it. Not yet built: comparing two runs side-by-side ("this quarter's plan vs. last quarter's") — today it's a real archive you can search and open one at a time, not a diff view.
 - Natural-language audit trail Q&A — "why did the Risk agent flag this?" answered from the audit log
 - Slack/Teams-native approval actions (approve/reject without opening the console)
 - Mobile companion view scoped to just the approval queue, for executives on the go
