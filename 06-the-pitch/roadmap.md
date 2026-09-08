@@ -33,7 +33,7 @@
 | Initiative | Metric | Confidence |
 |-----------|--------|-----------|
 | Expand the orchestration layer beyond the fraud/dispute wedge into a second department vertical (e.g. the Customer Success churn-signal capability from the original Orchestrator concept) | First paying logo outside the fraud/dispute vertical | L |
-| Everything else still sitting in `feature-ideas.md` and not triaged above — drill-down analytics, ~~workflow history~~ (built: `workflow-history.html`; run-to-run comparison still open), ~~natural-language audit-trail Q&A~~ (built: `audit.html`'s "Ask the audit trail" panel, a real Claude call grounded in the real log), mobile approvals, ~~saved objective templates~~ (built: the Command Center can save/reload a named objective+scope+routing template), in-product kill-switch messaging | Revisit once Horizon 1 and 2 are proven, not before | L |
+| Everything else still sitting in `feature-ideas.md` and not triaged above — ~~drill-down analytics~~ (built: a real department filter on Agent Registry/Approval Queue/Workflow History), ~~workflow history~~ (built: `workflow-history.html`; run-to-run comparison still open), ~~natural-language audit-trail Q&A~~ (built: `audit.html`'s "Ask the audit trail" panel, a real Claude call grounded in the real log), mobile approvals, ~~saved objective templates~~ (built: the Command Center can save/reload a named objective+scope+routing template), in-product kill-switch messaging | Revisit once Horizon 1 and 2 are proven, not before | L |
 
 ## Board Pitch
 

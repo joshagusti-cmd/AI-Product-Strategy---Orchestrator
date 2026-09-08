@@ -26,7 +26,7 @@ Input to the Horizon mapping in `roadmap.md`. Constructed from `feature-ideas.md
 | Policy editor for compliance owners | Story | P2 | Done (prototype) — `policies.html` built at prototype fidelity; its Core-tier policy now really gates the Orchestrate pipeline (Approval-required/Two-gate genuinely pauses a run until a human decides), not just a UI-only editor with no consumer | The Guardrails | governance, ux |
 | Slack/Teams-native approval actions | Story | P1 | Backlog | The Guardrails | integration, hitl |
 | Expand into a second department vertical | Epic | P3 | Backlog | The Bet | expansion, gtm |
-| Per-department drill-down analytics | Story | P2 | Backlog | The Bet | ux, analytics |
+| Per-department drill-down analytics | Story | P2 | Done (prototype) — real department filter on Agent Registry, Approval Queue, and Workflow History, built from each page's own real data; Audit Trail/Spend/Shadow AI have no clean department field to extend it to yet | The Bet | ux, analytics |
 | Workflow history / versioned deliverable archive | Story | P2 | Done (prototype) — `workflow-history.html` archives every completed Orchestrate run's full real deliverable (`orchestrate_runs`), searchable and reopenable; comparing two runs side-by-side is still open | The Bet | ux, audit |
 | Natural-language audit trail Q&A | Story | P3 | Done (prototype) — `audit.html`'s "Ask the audit trail" panel is a real Claude call grounded strictly in the workspace's real `audit_log` rows, rate-limited and its Q&A history persisted | The Contract | ux, ai-feature |
 | Mobile companion approvals view | Story | P3 | Backlog | The Guardrails | mobile, hitl |

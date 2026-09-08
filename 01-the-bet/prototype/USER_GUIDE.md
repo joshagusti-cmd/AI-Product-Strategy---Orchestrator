@@ -52,6 +52,8 @@ The full roster of agents the orchestrator governs — across every department, 
 
 Only two models are real per-call routing targets today — **Claude Sonnet 5** and **Claude Opus 4.8**. Assigning anything else (GPT-4o, Gemini 1.5 Pro, or Claude Haiku 4.5 via manual selection) doesn't error — the run silently falls back to that agent's Claude default and tells you so in a toast — but it does mean the registry's stated model and the real model running it have drifted apart. The **Shadow AI Audit** (below) is built to catch exactly that.
 
+**Filtering.** Filter by tier, or by department — the department chips are built from whatever's actually in your workspace's registry, not a fixed list. Click the **Departments covered** KPI tile to jump straight to the department filter.
+
 ---
 
 ## Policies (`policies.html`)
@@ -71,7 +73,7 @@ Only Admins and Compliance Owners can edit policies; every save is logged to the
 
 ## Approval Queue (`approvals.html`)
 
-The org-wide backlog of everything waiting on a human — filterable by risk. Anyone in the workspace can approve or reject. Deciding an approval that came from a paused Orchestrate run has a real, further effect: **Approve** actually resumes that run's remaining Claude calls and produces the deliverable; **Reject** genuinely ends it. This is the same real effect as deciding it from the Command Center's own panel — just from wherever you happen to be reviewing.
+The org-wide backlog of everything waiting on a human — filterable by risk and by department. Anyone in the workspace can approve or reject. Deciding an approval that came from a paused Orchestrate run has a real, further effect: **Approve** actually resumes that run's remaining Claude calls and produces the deliverable; **Reject** genuinely ends it. This is the same real effect as deciding it from the Command Center's own panel — just from wherever you happen to be reviewing.
 
 ---
 
@@ -85,7 +87,7 @@ A real-time, searchable log of every agent and human action — approving someth
 
 ## Workflow History (`workflow-history.html`)
 
-A real, searchable archive of every completed Orchestrate run's full deliverable — not just the Audit Trail's one-line pointer to it. Search past objectives, then click a row to expand its executive summary, findings, recommendations, risk flags, and every agent's individual step, exactly as it looked when the run finished. Runs that paused for a policy approval and were later resumed are marked so.
+A real, searchable archive of every completed Orchestrate run's full deliverable — not just the Audit Trail's one-line pointer to it. Search past objectives or filter by department (built from the real department scope each run actually used), then click a row to expand its executive summary, findings, recommendations, risk flags, and every agent's individual step, exactly as it looked when the run finished. Runs that paused for a policy approval and were later resumed are marked so.
 
 This is a real per-run archive you open one at a time — it doesn't yet let you diff two runs side by side.
 

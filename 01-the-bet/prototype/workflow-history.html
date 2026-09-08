@@ -8,9 +8,12 @@
 <link rel="stylesheet" href="assets/shared.css">
 <style>
   .kpi-strip { grid-template-columns: repeat(4, 1fr); }
-  .filters { margin: 18px 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .filters { margin: 18px 0; display: flex; flex-direction: column; gap: 10px; }
+  .filter-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .filter-row .filter-label { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-mute); flex-shrink: 0; }
   .search-box { max-width: 320px; }
   td.objective-cell { max-width: 46ch; }
+  .objective-depts { color: var(--text-mute); font-size: 11px; margin-top: 2px; }
   .paused-pill { font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 7px; border: 1px solid var(--accent-dim); color: var(--accent); display: inline-block; }
   .run-detail { background: var(--surface-sunken); padding: 16px 20px; }
   .run-detail h4 { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-mute); margin: 16px 0 6px; }
@@ -68,7 +71,8 @@
   </section>
 
   <div class="filters">
-    <input class="control search-box" id="search" type="search" placeholder="Search past objectives…">
+    <div class="filter-row"><input class="control search-box" id="search" type="search" placeholder="Search past objectives…"></div>
+    <div class="filter-row"><span class="filter-label">Department</span><div class="chip-row" id="dept-filter"></div></div>
   </div>
 
   <div class="panel" id="history-panel">
@@ -97,9 +101,30 @@
   Aiven.initChrome();
   var runs = [];          // null if demo/anonymous, else array of past runs
   var query = "";
+  var activeDept = "All";
   var openId = null;      // id of the currently expanded row, or null
 
   function fmtInt(n) { return (n || 0).toLocaleString(); }
+
+  // Real per-department drill-down: a run's real departments array
+  // (the scope it was actually run with) decides which department chips
+  // exist and which runs match one — not a fixed department list.
+  function renderDeptFilter() {
+    var wrap = document.getElementById("dept-filter");
+    var depts = [];
+    (runs || []).forEach(function (r) {
+      (r.departments || []).forEach(function (d) { if (depts.indexOf(d) === -1) depts.push(d); });
+    });
+    wrap.innerHTML = "";
+    ["All"].concat(depts).forEach(function (d) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "chip" + (d === activeDept ? " on" : "");
+      b.textContent = d;
+      b.addEventListener("click", function () { activeDept = d; renderDeptFilter(); renderTable(); });
+      wrap.appendChild(b);
+    });
+  }
 
   function renderKpis() {
     var total = runs ? runs.length : 0;
@@ -112,6 +137,7 @@
   }
 
   function matches(r) {
+    if (activeDept !== "All" && (r.departments || []).indexOf(activeDept) === -1) return false;
     if (!query) return true;
     return r.objective.toLowerCase().indexOf(query.toLowerCase()) !== -1;
   }
@@ -151,7 +177,7 @@
 
     var rows = runs.filter(matches);
     if (!rows.length) {
-      body.innerHTML = "<tr><td colspan='6'><div class='empty-state'>" + (runs.length ? "No past runs match your search." : "No completed Orchestrate runs yet — run one from the Command Center and it'll show up here.") + "</div></td></tr>";
+      body.innerHTML = "<tr><td colspan='6'><div class='empty-state'>" + (runs.length ? "No past runs match this filter." : "No completed Orchestrate runs yet — run one from the Command Center and it'll show up here.") + "</div></td></tr>";
       return;
     }
 
@@ -162,7 +188,8 @@
       var isOpen = openId === r.id;
       var mainRow = "<tr class='history-row' data-id='" + r.id + "' style='cursor:pointer;'>" +
         "<td class='mono' style='width:18px;'>" + (isOpen ? "▾" : "▸") + "</td>" +
-        "<td class='name objective-cell'>" + r.objective + "</td>" +
+        "<td class='name objective-cell'>" + r.objective +
+        (r.departments && r.departments.length ? "<div class='objective-depts'>" + r.departments.join(" · ") + "</div>" : "") + "</td>" +
         "<td class='mono'>" + (r.model || "—") + "</td>" +
         "<td class='tabular'>" + fmtInt((r.input_tokens || 0) + (r.output_tokens || 0)) + "</td>" +
         "<td>" + status + "</td>" +
@@ -188,6 +215,7 @@
   Aiven.getRunHistory().then(function (data) {
     runs = data; // null for demo/anonymous, else an array (possibly empty)
     renderKpis();
+    renderDeptFilter();
     renderTable();
   }).catch(function (e) {
     Aiven.toast("Couldn't load workflow history: " + e.message);
