@@ -232,6 +232,9 @@ ${logText}`;
   }
 
   const data = await resp.json();
+  if (data.stop_reason === "max_tokens") {
+    return json({ error: "The answer was cut off by the token limit before it finished — try asking a narrower question." }, 502);
+  }
   const textBlock = (data.content || []).find((b: { type: string }) => b.type === "text");
   const answer = textBlock ? textBlock.text : "The model didn't return a text answer — try rephrasing the question.";
 

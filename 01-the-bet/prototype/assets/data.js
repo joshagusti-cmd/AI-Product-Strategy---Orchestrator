@@ -613,7 +613,6 @@
   function renderPlanSection(usage, amAdmin) {
     if (!usage) return "";
     var info = PLAN_INFO[usage.plan] || PLAN_INFO.free;
-    var pct = usage.limit ? Math.min(100, Math.round((usage.used / usage.limit) * 100)) : 0;
     var buttons = amAdmin
       ? PLAN_ORDER.filter(function (key) { return key !== usage.plan; }).map(function (key) {
           var verb = PLAN_INFO[key].limit > usage.limit ? "Upgrade to " : "Downgrade to ";
