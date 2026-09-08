@@ -75,6 +75,8 @@ Only Admins and Compliance Owners can edit policies; every save is logged to the
 
 The org-wide backlog of everything waiting on a human — filterable by risk and by department. Anyone in the workspace can approve or reject. Deciding an approval that came from a paused Orchestrate run has a real, further effect: **Approve** actually resumes that run's remaining Claude calls and produces the deliverable; **Reject** genuinely ends it. This is the same real effect as deciding it from the Command Center's own panel — just from wherever you happen to be reviewing.
 
+**On your phone.** Click **Open the mobile companion view** (or go straight to `mobile-approvals.html`) for a page built for a phone screen, not the desktop table shrunk down: two KPI tiles (Pending, High risk pending), a Pending/All toggle, and each request as a card with big Approve/Reject buttons. It's the same live queue and the same real decisions — approving from your phone resumes a paused run exactly like approving from your laptop. It's a companion view, not a tenth page in the main navigation, so you'll always get to it via a link rather than the subnav.
+
 ---
 
 ## Audit Trail (`audit.html`)

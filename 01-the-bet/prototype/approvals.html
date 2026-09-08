@@ -15,6 +15,8 @@
   .decided-pill { font-family: var(--mono); font-size: 10.5px; }
   .decided-pill.approved { color: var(--success); }
   .decided-pill.rejected { color: var(--critical); }
+  .mobile-link { display: inline-block; margin-top: 8px; font-family: var(--mono); font-size: 11.5px; color: var(--accent); text-decoration: none; }
+  .mobile-link:hover { text-decoration: underline; }
   @media (max-width: 980px) { .kpi-strip { grid-template-columns: repeat(2, 1fr); } }
 </style>
 </head>
@@ -54,6 +56,7 @@
   <div class="page-head">
     <h1>&gt; Approval Queue</h1>
     <p>Every agent action that crosses an escalation threshold lands here, org-wide, until a human decides. Nothing ships without sign-off. The Command Center's approval panel shows only the single approval raised by the run currently in progress — this page is the full backlog.</p>
+    <a class="mobile-link" href="mobile-approvals.html">Open the mobile companion view →</a>
   </div>
 
   <section class="kpi-strip" aria-label="Approval metrics">
