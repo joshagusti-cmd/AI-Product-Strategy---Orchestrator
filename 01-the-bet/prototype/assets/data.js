@@ -23,6 +23,7 @@
   var SUPABASE_URL = "https://uqgdruekuwitjwyotdud.supabase.co";
   var SUPABASE_ANON_KEY = "sb_publishable_p18dpRJSewtzNn0mLS4GCw_4A3p1qLJ";
   var ORCHESTRATE_FUNCTION_URL = SUPABASE_URL + "/functions/v1/orchestrate";
+  var AUDIT_QA_FUNCTION_URL = SUPABASE_URL + "/functions/v1/audit-qa";
   var DEMO_WORKSPACE_ID = "00000000-0000-0000-0000-000000000001";
 
   if (!global.supabase || !global.supabase.createClient) {
@@ -441,6 +442,48 @@
     return r.data || [];
   }
 
+  // Natural-language audit trail Q&A — a real Claude call grounded
+  // strictly in this workspace's real audit_log rows (see
+  // supabase/functions/audit-qa/index.ts and
+  // migrations/0014_audit_qa.sql). Requires a signed-in session, same as
+  // orchestrate(); rate-limited per workspace server-side, separately
+  // from the Orchestrate cap.
+  async function askAuditTrail(question) {
+    await ready;
+    var session = (await sb.auth.getSession()).data.session;
+    var token = session ? session.access_token : SUPABASE_ANON_KEY;
+    var resp = await fetch(AUDIT_QA_FUNCTION_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "apikey": SUPABASE_ANON_KEY,
+        "authorization": "Bearer " + token
+      },
+      body: JSON.stringify({ question: question })
+    });
+    var body = await resp.json().catch(function () { return {}; });
+    if (!resp.ok || body.error) {
+      throw new Error(body.error || ("Question failed (" + resp.status + ")"));
+    }
+    return body; // { answer, model, usage, logRowsConsidered }
+  }
+
+  // Real, persisted history of every question asked and answered for
+  // this workspace (migrations/0014) — so, like workflow history, a
+  // past answer is still there after you navigate away. Returns null
+  // for the read-only demo workspace.
+  async function getAuditQaHistory() {
+    await ready;
+    if (currentWorkspaceId === DEMO_WORKSPACE_ID) return null;
+    var r = await sb.from("audit_qa_log")
+      .select("id, question, answer, log_rows_considered, model, input_tokens, output_tokens, created_at")
+      .eq("workspace_id", currentWorkspaceId)
+      .order("created_at", { ascending: false })
+      .limit(100);
+    if (r.error) throw r.error;
+    return r.data || [];
+  }
+
   // Admin only (RLS: the workspaces table has no client UPDATE policy at
   // all — this security-definer RPC, migrations/0009, is the sole write
   // path). Changes the enforced Orchestrate cap to the picked plan's
@@ -788,6 +831,8 @@
     getUsage: getUsage,
     getRealSpend: getRealSpend,
     getRunHistory: getRunHistory,
+    askAuditTrail: askAuditTrail,
+    getAuditQaHistory: getAuditQaHistory,
     setPlan: setPlan,
     timeAgo: timeAgo,
     timeClock: timeClock,
