@@ -22,6 +22,21 @@
   .run-detail ul { margin: 0; padding-left: 20px; }
   .run-detail ul li { font-size: 13px; line-height: 1.6; margin-bottom: 6px; max-width: 74ch; }
   .run-detail table.data { margin-top: 2px; }
+  .compare-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+  .compare-bar .hint { font-size: 11.5px; color: var(--text-mute); }
+  .compare-bar-actions { display: flex; gap: 8px; }
+  input.compare-check { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+  input.compare-check:disabled { cursor: not-allowed; opacity: 0.4; }
+  .compare-grid { display: grid; grid-template-columns: 1fr 1fr; }
+  .compare-col { padding: 18px 20px; min-width: 0; }
+  .compare-col + .compare-col { border-left: 1px solid var(--border-soft); }
+  .compare-col-head .obj { font-weight: 600; font-size: 13.5px; color: var(--text); line-height: 1.4; }
+  .compare-col-head .meta { font-family: var(--mono); font-size: 10.5px; color: var(--text-mute); margin-top: 5px; line-height: 1.7; }
+  .compare-col .run-detail { padding: 0; background: transparent; }
+  @media (max-width: 860px) {
+    .compare-grid { grid-template-columns: 1fr; }
+    .compare-col + .compare-col { border-left: none; border-top: 1px solid var(--border-soft); }
+  }
   @media (max-width: 980px) { .kpi-strip { grid-template-columns: repeat(2, 1fr); } }
 </style>
 </head>
@@ -60,7 +75,7 @@
 <div class="shell">
   <div class="page-head">
     <h1>&gt; Workflow History</h1>
-    <p>Every completed Orchestrate run's full deliverable — executive summary, findings, recommendations, risk flags, and every agent step — archived exactly as it was generated, real runs only. The Audit Trail logs a one-line pointer to each run; this is the deliverable itself, still here after you've navigated away.</p>
+    <p>Every completed Orchestrate run's full deliverable — executive summary, findings, recommendations, risk flags, and every agent step — archived exactly as it was generated, real runs only. The Audit Trail logs a one-line pointer to each run; this is the deliverable itself, still here after you've navigated away. Select two runs to compare them side by side.</p>
   </div>
 
   <section class="kpi-strip" aria-label="Workflow history metrics">
@@ -70,18 +85,36 @@
     <div class="kpi"><div class="eyebrow">Most recent</div><div class="val" id="kpi-latest" style="font-size:14px;">—</div><div class="delta">run archived</div></div>
   </section>
 
-  <div class="filters">
+  <div class="filters" id="filters-wrap">
     <div class="filter-row"><input class="control search-box" id="search" type="search" placeholder="Search past objectives…"></div>
     <div class="filter-row"><span class="filter-label">Department</span><div class="chip-row" id="dept-filter"></div></div>
   </div>
 
+  <div class="compare-bar hidden" id="compare-bar">
+    <span class="hint" id="compare-hint">Select two runs below to compare them side by side.</span>
+    <div class="compare-bar-actions">
+      <button class="btn small ghost hidden" id="compare-clear-btn" type="button">Clear selection</button>
+      <button class="btn small primary" id="compare-btn" type="button" disabled>Compare selected</button>
+    </div>
+  </div>
+
   <div class="panel" id="history-panel">
-    <div class="panel-head"><div><h2>Archive</h2><div class="hint">Newest first — click a row to view its full deliverable.</div></div></div>
+    <div class="panel-head"><div><h2>Archive</h2><div class="hint">Newest first — click a row to view its full deliverable, or check up to two to compare them.</div></div></div>
     <div class="panel-body tight scroll-x">
       <table class="data" id="history-table">
-        <thead><tr><th></th><th>Objective</th><th>Model(s)</th><th>Tokens</th><th>Status</th><th>When</th></tr></thead>
+        <thead><tr><th></th><th></th><th>Objective</th><th>Model(s)</th><th>Tokens</th><th>Status</th><th>When</th></tr></thead>
         <tbody id="history-rows"></tbody>
       </table>
+    </div>
+  </div>
+
+  <div class="panel hidden" id="compare-panel">
+    <div class="panel-head">
+      <div><h2>Compare runs</h2><div class="hint">The two full deliverables you picked, side by side, exactly as archived.</div></div>
+      <button class="btn small ghost" id="compare-back-btn" type="button">← Back to archive</button>
+    </div>
+    <div class="panel-body tight scroll-x">
+      <div class="compare-grid" id="compare-grid"></div>
     </div>
   </div>
 
@@ -103,6 +136,8 @@
   var query = "";
   var activeDept = "All";
   var openId = null;      // id of the currently expanded row, or null
+  var selectedIds = [];   // up to 2 run ids checked for comparison
+  var compareIds = null;  // [idA, idB] once "Compare selected" is clicked, else null
 
   function fmtInt(n) { return (n || 0).toLocaleString(); }
 
@@ -167,17 +202,29 @@
       "</div>";
   }
 
+  function updateCompareBar() {
+    var bar = document.getElementById("compare-bar");
+    if (compareIds) { bar.classList.add("hidden"); return; }
+    bar.classList.toggle("hidden", !runs || !runs.length);
+    document.getElementById("compare-hint").textContent =
+      selectedIds.length === 2 ? "2 selected — ready to compare." :
+      selectedIds.length === 1 ? "1 selected — pick one more to compare." :
+      "Select two runs below to compare them side by side.";
+    document.getElementById("compare-btn").disabled = selectedIds.length !== 2;
+    document.getElementById("compare-clear-btn").classList.toggle("hidden", selectedIds.length === 0);
+  }
+
   function renderTable() {
     var body = document.getElementById("history-rows");
 
     if (runs === null) {
-      body.innerHTML = "<tr><td colspan='6'><div class='empty-state'>Sign in and run Orchestrate from the <a href='index.html'>Command Center</a> to start building your workspace's real workflow history. The public demo is view-only, so there's nothing archived here yet.</div></td></tr>";
+      body.innerHTML = "<tr><td colspan='7'><div class='empty-state'>Sign in and run Orchestrate from the <a href='index.html'>Command Center</a> to start building your workspace's real workflow history. The public demo is view-only, so there's nothing archived here yet.</div></td></tr>";
       return;
     }
 
     var rows = runs.filter(matches);
     if (!rows.length) {
-      body.innerHTML = "<tr><td colspan='6'><div class='empty-state'>" + (runs.length ? "No past runs match this filter." : "No completed Orchestrate runs yet — run one from the Command Center and it'll show up here.") + "</div></td></tr>";
+      body.innerHTML = "<tr><td colspan='7'><div class='empty-state'>" + (runs.length ? "No past runs match this filter." : "No completed Orchestrate runs yet — run one from the Command Center and it'll show up here.") + "</div></td></tr>";
       return;
     }
 
@@ -186,7 +233,11 @@
         ? "<span class='paused-pill'>Paused → resumed</span>"
         : "<span class='muted' style='font-size:11px;'>Completed</span>";
       var isOpen = openId === r.id;
+      var isChecked = selectedIds.indexOf(r.id) !== -1;
+      var checkDisabled = !isChecked && selectedIds.length >= 2;
       var mainRow = "<tr class='history-row' data-id='" + r.id + "' style='cursor:pointer;'>" +
+        "<td style='width:22px;'><input type='checkbox' class='compare-check' data-id='" + r.id + "'" +
+        (isChecked ? " checked" : "") + (checkDisabled ? " disabled" : "") + "></td>" +
         "<td class='mono' style='width:18px;'>" + (isOpen ? "▾" : "▸") + "</td>" +
         "<td class='name objective-cell'>" + r.objective +
         (r.departments && r.departments.length ? "<div class='objective-depts'>" + r.departments.join(" · ") + "</div>" : "") + "</td>" +
@@ -194,7 +245,7 @@
         "<td class='tabular'>" + fmtInt((r.input_tokens || 0) + (r.output_tokens || 0)) + "</td>" +
         "<td>" + status + "</td>" +
         "<td class='mono' title='" + new Date(r.created_at).toLocaleString() + "'>" + Aiven.timeAgo(r.created_at) + "</td></tr>";
-      var detailRow = isOpen ? "<tr><td colspan='6' style='padding:0;'>" + renderDetail(r) + "</td></tr>" : "";
+      var detailRow = isOpen ? "<tr><td colspan='7' style='padding:0;'>" + renderDetail(r) + "</td></tr>" : "";
       return mainRow + detailRow;
     }).join("");
 
@@ -205,6 +256,40 @@
         renderTable();
       });
     });
+
+    Array.prototype.forEach.call(body.querySelectorAll(".compare-check"), function (cb) {
+      cb.addEventListener("click", function (e) { e.stopPropagation(); });
+      cb.addEventListener("change", function () {
+        var id = cb.dataset.id;
+        if (cb.checked) {
+          if (selectedIds.length >= 2) { cb.checked = false; return; }
+          selectedIds.push(id);
+        } else {
+          selectedIds = selectedIds.filter(function (x) { return x !== id; });
+        }
+        updateCompareBar();
+        renderTable();
+      });
+    });
+  }
+
+  function renderCompareCol(r) {
+    var status = r.was_paused
+      ? "<span class='paused-pill'>Paused → resumed</span>"
+      : "<span class='muted' style='font-size:11px;'>Completed</span>";
+    return "<div class='compare-col'>" +
+      "<div class='compare-col-head'>" +
+      "<div class='obj'>" + r.objective + "</div>" +
+      "<div class='meta'>" + (r.departments && r.departments.length ? r.departments.join(" · ") + " · " : "") + (r.model || "—") +
+      " · " + fmtInt((r.input_tokens || 0) + (r.output_tokens || 0)) + " tokens<br>" +
+      new Date(r.created_at).toLocaleString() + " · " + status + "</div>" +
+      "</div>" + renderDetail(r) + "</div>";
+  }
+
+  function renderCompareView() {
+    var a = runs.find(function (r) { return r.id === compareIds[0]; });
+    var b = runs.find(function (r) { return r.id === compareIds[1]; });
+    document.getElementById("compare-grid").innerHTML = renderCompareCol(a) + renderCompareCol(b);
   }
 
   document.getElementById("search").addEventListener("input", function (e) {
@@ -212,10 +297,35 @@
     renderTable();
   });
 
+  document.getElementById("compare-btn").addEventListener("click", function () {
+    if (selectedIds.length !== 2) return;
+    compareIds = selectedIds.slice();
+    document.getElementById("filters-wrap").classList.add("hidden");
+    document.getElementById("history-panel").classList.add("hidden");
+    document.getElementById("compare-panel").classList.remove("hidden");
+    updateCompareBar();
+    renderCompareView();
+  });
+  document.getElementById("compare-clear-btn").addEventListener("click", function () {
+    selectedIds = [];
+    updateCompareBar();
+    renderTable();
+  });
+  document.getElementById("compare-back-btn").addEventListener("click", function () {
+    compareIds = null;
+    selectedIds = [];
+    document.getElementById("compare-panel").classList.add("hidden");
+    document.getElementById("filters-wrap").classList.remove("hidden");
+    document.getElementById("history-panel").classList.remove("hidden");
+    updateCompareBar();
+    renderTable();
+  });
+
   Aiven.getRunHistory().then(function (data) {
     runs = data; // null for demo/anonymous, else an array (possibly empty)
     renderKpis();
     renderDeptFilter();
+    updateCompareBar();
     renderTable();
   }).catch(function (e) {
     Aiven.toast("Couldn't load workflow history: " + e.message);
