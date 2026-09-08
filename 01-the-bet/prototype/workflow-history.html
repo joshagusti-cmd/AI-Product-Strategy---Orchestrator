@@ -232,8 +232,13 @@
       var status = r.was_paused
         ? "<span class='paused-pill'>Paused → resumed</span>"
         : "<span class='muted' style='font-size:11px;'>Completed</span>";
-      var isOpen = openId === r.id;
-      var isChecked = selectedIds.indexOf(r.id) !== -1;
+      // r.id is a real Postgres bigint (orchestrate_runs.id), which
+      // supabase-js/PostgREST deserializes as a JS number; openId and
+      // selectedIds always hold strings (read from a DOM data-id
+      // attribute via .dataset.id, which is always a string) — coerce
+      // to String() before comparing, or these never match.
+      var isOpen = openId === String(r.id);
+      var isChecked = selectedIds.indexOf(String(r.id)) !== -1;
       var checkDisabled = !isChecked && selectedIds.length >= 2;
       var mainRow = "<tr class='history-row' data-id='" + r.id + "' style='cursor:pointer;'>" +
         "<td style='width:22px;'><input type='checkbox' class='compare-check' data-id='" + r.id + "'" +
@@ -287,8 +292,8 @@
   }
 
   function renderCompareView() {
-    var a = runs.find(function (r) { return r.id === compareIds[0]; });
-    var b = runs.find(function (r) { return r.id === compareIds[1]; });
+    var a = runs.find(function (r) { return String(r.id) === compareIds[0]; });
+    var b = runs.find(function (r) { return String(r.id) === compareIds[1]; });
     document.getElementById("compare-grid").innerHTML = renderCompareCol(a) + renderCompareCol(b);
   }
 
