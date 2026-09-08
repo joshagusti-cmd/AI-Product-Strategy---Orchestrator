@@ -194,6 +194,20 @@
     };
   }
 
+  // Mobile companion approvals view (mobile-approvals.html): a lean fetch
+  // of just the approvals table — loadState() above pulls agents/
+  // policies/shadow_tools/audit_log too, which a phone-scoped queue
+  // doesn't need. Real for both a signed-in workspace and the read-only
+  // public demo, same visibility as the full Approval Queue page —
+  // deciding still goes through decideApproval()/resumeOrchestrate()
+  // below, which throw for the demo via requireOwnWorkspace().
+  async function getApprovalQueue() {
+    await ready;
+    var r = await sb.from("approvals").select("*").eq("workspace_id", currentWorkspaceId).order("requested_at", { ascending: false });
+    if (r.error) throw r.error;
+    return r.data.map(mapApproval);
+  }
+
   /* ---------------- writes (all scoped to the caller's own workspace) ---------------- */
   // Admin only (RLS: migrations/0008) — .select() so a 0-row result
   // (RLS silently blocked it) can be turned into a real error below.
@@ -874,6 +888,7 @@
   global.Aiven = {
     ready: ready,
     loadState: loadState,
+    getApprovalQueue: getApprovalQueue,
     updateAgentModel: updateAgentModel,
     savePolicy: savePolicy,
     decideApproval: decideApproval,

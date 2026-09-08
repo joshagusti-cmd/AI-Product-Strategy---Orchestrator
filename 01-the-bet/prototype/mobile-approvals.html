@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Approvals — Aiven Orchestrator</title>
+<meta name="description" content="Mobile companion: the Approval Queue only, sized for a phone, for reviewing agent requests on the go.">
+<link rel="stylesheet" href="assets/shared.css">
+<style>
+  /* A genuinely mobile-first layout, not a squeezed-down desktop page —
+     capped narrow even on a wide viewport, so it reads the same on a
+     laptop preview as it does on the phone it's built for. */
+  .shell { max-width: 480px; padding: 0 14px 60px; }
+  .m-topbar-inner { max-width: 480px; padding: 12px 14px; gap: 10px; }
+  .m-topbar-inner .brand-text .sub { display: none; }
+  .m-topbar-inner .auth-widget { flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+  .m-page-head { margin-top: 18px; margin-bottom: 4px; }
+  .m-page-head h1 { font-family: var(--mono); font-size: 17px; font-weight: 600; margin: 0 0 4px; }
+  .m-page-head p { margin: 0; color: var(--text-mute); font-size: 11.5px; }
+  .m-console-link { display: inline-block; margin-top: 6px; font-family: var(--mono); font-size: 11px; color: var(--accent); text-decoration: none; }
+  .m-console-link:hover { text-decoration: underline; }
+
+  .m-kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 16px 0; }
+  .m-kpi { border: 1px solid var(--border); background: var(--surface); padding: 12px 14px; }
+  .m-kpi .eyebrow { margin-bottom: 6px; }
+  .m-kpi .val { font-family: var(--mono); font-size: 22px; font-weight: 600; }
+
+  .m-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+  .m-seg { display: flex; border: 1px solid var(--border); }
+  .m-seg button {
+    font-family: var(--mono); font-size: 11px; padding: 7px 12px; border: none; background: var(--surface);
+    color: var(--text-mute); cursor: pointer;
+  }
+  .m-seg button + button { border-left: 1px solid var(--border); }
+  .m-seg button.on { background: var(--accent-soft); color: var(--accent); }
+  .m-refresh {
+    border: 1px solid var(--border); background: var(--surface); color: var(--text-mute);
+    font-family: var(--mono); font-size: 11px; padding: 7px 10px; cursor: pointer;
+  }
+  .m-refresh:hover { color: var(--text); border-color: var(--text-mute); }
+  .m-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .m-card {
+    border: 1px solid var(--border); background: var(--surface); padding: 14px; margin-bottom: 10px;
+  }
+  .m-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .m-card-title { font-weight: 600; font-size: 13.5px; color: var(--text); line-height: 1.35; }
+  .m-card-meta { margin-top: 6px; font-family: var(--mono); font-size: 10.5px; color: var(--text-mute); display: flex; flex-wrap: wrap; gap: 6px 10px; }
+  .m-card-actions { display: flex; gap: 8px; margin-top: 12px; }
+  .m-card-actions .btn { flex: 1; justify-content: center; padding: 12px 10px; font-size: 12px; min-height: 44px; }
+  .m-decided { margin-top: 12px; font-family: var(--mono); font-size: 11px; }
+  .m-decided.approved { color: var(--success); }
+  .m-decided.rejected { color: var(--critical); }
+
+  footer.foot { margin-top: 28px; font-size: 10.5px; }
+</style>
+</head>
+<body data-page="mobile-approvals">
+<script>document.documentElement.setAttribute("data-theme", "dark");</script>
+
+<div class="topbar">
+  <div class="topbar-inner m-topbar-inner">
+    <a class="brand" href="index.html">
+      <div class="brand-mark"></div>
+      <div class="brand-text"><span class="name">AIVEN</span><span class="sub">Agent governance console</span></div>
+    </a>
+    <div class="auth-widget" id="auth-widget"></div>
+  </div>
+</div>
+
+<div class="shell">
+  <div class="page-head m-page-head">
+    <h1>&gt; Approvals</h1>
+    <p>Mobile companion — just the queue, sized for a phone. Approve or reject from wherever you are; every decision is the same real one the full console makes.</p>
+    <a class="m-console-link" href="approvals.html">Open the full console →</a>
+  </div>
+
+  <section class="m-kpis" aria-label="Approval metrics">
+    <div class="m-kpi"><div class="eyebrow">Pending</div><div class="val tabular" id="kpi-pending">—</div></div>
+    <div class="m-kpi"><div class="eyebrow">High risk pending</div><div class="val tabular" id="kpi-high">—</div></div>
+  </section>
+
+  <div class="m-toolbar">
+    <div class="m-seg" id="view-seg" role="group" aria-label="Filter">
+      <button type="button" data-view="pending" class="on">Pending</button>
+      <button type="button" data-view="all">All</button>
+    </div>
+    <button class="m-refresh" id="refresh-btn" type="button">Refresh</button>
+  </div>
+
+  <div id="card-list"></div>
+
+  <footer class="foot">
+    <span>Aiven Consulting Group — prototype build · <button class="reset-link" id="reset-demo" type="button">Reset demo data</button></span>
+  </footer>
+</div>
+
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="assets/data.js"></script>
+<script>
+(function () {
+  "use strict";
+  Aiven.initChrome();
+  var approvals = [];
+  var view = "pending"; // "pending" | "all"
+
+  function renderKpis() {
+    document.getElementById("kpi-pending").textContent = approvals.filter(function (a) { return a.status === "pending"; }).length;
+    document.getElementById("kpi-high").textContent = approvals.filter(function (a) { return a.status === "pending" && a.risk === "High"; }).length;
+  }
+
+  function renderSeg() {
+    Array.prototype.forEach.call(document.querySelectorAll("#view-seg button"), function (b) {
+      b.classList.toggle("on", b.dataset.view === view);
+    });
+  }
+
+  function cardHtml(a) {
+    var decision = a.status === "pending"
+      ? "<div class='m-card-actions'>" +
+        "<button class='btn ghost approve' data-id='" + a.id + "' data-decision='approved'>Approve</button>" +
+        "<button class='btn ghost reject' data-id='" + a.id + "' data-decision='rejected'>Reject</button></div>"
+      : "<div class='m-decided " + a.status + "'>" + (a.status === "approved" ? "✓ Approved" : "✕ Rejected") + "</div>";
+    return "<div class='m-card' data-row='" + a.id + "'>" +
+      "<div class='m-card-head'><div class='m-card-title'>" + a.title + "</div><span class='risk-pill " + a.risk + "'>" + a.risk + "</span></div>" +
+      "<div class='m-card-meta'><span>" + a.agent + "</span><span>" + a.dept + "</span>" +
+      "<span title='" + new Date(a.requestedAt).toLocaleString() + "'>" + Aiven.timeAgo(a.requestedAt) + "</span></div>" +
+      decision + "</div>";
+  }
+
+  function renderCards() {
+    var rows = approvals
+      .filter(function (a) { return view === "all" || a.status === "pending"; })
+      .slice()
+      .sort(function (a, b) { return (a.status === "pending" ? 0 : 1) - (b.status === "pending" ? 0 : 1); });
+    var list = document.getElementById("card-list");
+    if (!rows.length) {
+      list.innerHTML = "<div class='empty-state'>" + (view === "pending" ? "Nothing waiting on you right now." : "No approvals in this workspace yet.") + "</div>";
+      return;
+    }
+    list.innerHTML = rows.map(cardHtml).join("");
+
+    Array.prototype.forEach.call(list.querySelectorAll("button[data-decision]"), function (btn) {
+      btn.addEventListener("click", async function () {
+        var a = approvals.find(function (x) { return x.id === btn.dataset.id; });
+        var decision = btn.dataset.decision;
+        var card = list.querySelector("[data-row='" + a.id + "']");
+        Array.prototype.forEach.call(card.querySelectorAll("button[data-decision]"), function (b) { b.disabled = true; });
+        try {
+          await Aiven.decideApproval(a.id, decision);
+          a.status = decision;
+          await Aiven.addAudit({ actor: "Human reviewer", model: "—", risk: a.risk,
+            action: (a.status === "approved" ? "Approved: " : "Rejected: ") + a.title,
+            detail: "Raised by " + a.agent + " · " + a.dept + " · decided via the mobile Approval companion." });
+          Aiven.toast("Request " + a.status + " — recorded to audit trail");
+          renderKpis();
+          renderCards();
+
+          // Same real effect as the full Approval Queue: an approval
+          // that paused a real Orchestrate run (Policy Editor's Core-tier
+          // gate) actually resumes it on approval, or genuinely ends it
+          // on rejection — deciding from a phone has the identical
+          // consequence as deciding from the desktop console.
+          if (a.hasRunState && !a.resumed) {
+            if (decision === "approved") {
+              Aiven.toast("Resuming the paused run — real Claude calls in progress…");
+              try {
+                var res = await Aiven.resumeOrchestrate(a.id);
+                a.resumed = true;
+                if (res.rejected) {
+                  Aiven.toast(res.error);
+                } else {
+                  Aiven.toast("Run resumed — executive deliverable generated. See Workflow History.");
+                  await Aiven.addAudit({ actor: "Orchestrator Core", model: res.model, risk: "—",
+                    action: "Resumed paused run and generated executive deliverable: " + a.title,
+                    detail: "Strategy + Writer calls completed after approval via the mobile Approval companion." });
+                }
+              } catch (e) {
+                Aiven.toast("Approved, but couldn't resume the run: " + e.message);
+              }
+            } else {
+              await Aiven.addAudit({ actor: "Orchestrator Core", model: "—", risk: a.risk,
+                action: "Run terminated by rejection: " + a.title,
+                detail: "No further Claude calls were made — Strategy and Writer never ran." });
+            }
+          }
+        } catch (e) {
+          Aiven.toast("Couldn't record decision: " + e.message);
+          renderCards();
+        }
+      });
+    });
+  }
+
+  function load() {
+    var refreshBtn = document.getElementById("refresh-btn");
+    refreshBtn.disabled = true;
+    return Aiven.getApprovalQueue().then(function (rows) {
+      approvals = rows;
+      renderKpis();
+      renderCards();
+    }).catch(function (e) {
+      Aiven.toast("Couldn't load approvals: " + e.message);
+    }).finally(function () {
+      refreshBtn.disabled = false;
+    });
+  }
+
+  document.getElementById("view-seg").addEventListener("click", function (e) {
+    var btn = e.target.closest("button[data-view]");
+    if (!btn) return;
+    view = btn.dataset.view;
+    renderSeg();
+    renderCards();
+  });
+  document.getElementById("refresh-btn").addEventListener("click", load);
+
+  Aiven.ready.then(load);
+})();
+</script>
+</body>
+</html>
