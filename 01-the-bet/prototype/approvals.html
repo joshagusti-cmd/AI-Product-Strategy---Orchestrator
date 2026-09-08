@@ -8,7 +8,9 @@
 <link rel="stylesheet" href="assets/shared.css">
 <style>
   .kpi-strip { grid-template-columns: repeat(4, 1fr); }
-  .filters { margin: 18px 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .filters { margin: 18px 0; display: flex; flex-direction: column; gap: 10px; }
+  .filter-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .filter-row .filter-label { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-mute); flex-shrink: 0; }
   .row-actions { display: flex; gap: 8px; }
   .decided-pill { font-family: var(--mono); font-size: 10.5px; }
   .decided-pill.approved { color: var(--success); }
@@ -62,7 +64,8 @@
   </section>
 
   <div class="filters">
-    <div class="chip-row" id="risk-filter"></div>
+    <div class="filter-row"><span class="filter-label">Risk</span><div class="chip-row" id="risk-filter"></div></div>
+    <div class="filter-row"><span class="filter-label">Department</span><div class="chip-row" id="dept-filter"></div></div>
   </div>
 
   <div class="panel">
@@ -92,6 +95,7 @@
   var state = { approvals: [] };
   var RISKS = ["All", "High", "Medium", "Low"];
   var activeRisk = "All";
+  var activeDept = "All";
 
   function renderFilters() {
     var wrap = document.getElementById("risk-filter");
@@ -103,6 +107,23 @@
       b.textContent = r;
       b.addEventListener("click", function () { activeRisk = r; renderFilters(); renderTable(); });
       wrap.appendChild(b);
+    });
+
+    // Real per-department drill-down: departments here are whatever
+    // actually shows up in this workspace's real approvals, not a fixed
+    // list — including "Cross-functional"/joined-department strings a
+    // paused Orchestrate run raises (see supabase/functions/orchestrate).
+    var depts = [];
+    state.approvals.forEach(function (a) { if (depts.indexOf(a.dept) === -1) depts.push(a.dept); });
+    var deptWrap = document.getElementById("dept-filter");
+    deptWrap.innerHTML = "";
+    ["All"].concat(depts).forEach(function (d) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "chip" + (d === activeDept ? " on" : "");
+      b.textContent = d;
+      b.addEventListener("click", function () { activeDept = d; renderFilters(); renderTable(); });
+      deptWrap.appendChild(b);
     });
   }
 
@@ -116,12 +137,12 @@
 
   function renderTable() {
     var rows = state.approvals
-      .filter(function (a) { return activeRisk === "All" || a.risk === activeRisk; })
+      .filter(function (a) { return (activeRisk === "All" || a.risk === activeRisk) && (activeDept === "All" || a.dept === activeDept); })
       .slice()
       .sort(function (a, b) { return (a.status === "pending" ? 0 : 1) - (b.status === "pending" ? 0 : 1); });
     var body = document.getElementById("approval-rows");
     if (!rows.length) {
-      body.innerHTML = "<tr><td colspan='6'><div class='empty-state'>Nothing in the queue at this risk level.</div></td></tr>";
+      body.innerHTML = "<tr><td colspan='6'><div class='empty-state'>Nothing in the queue at this filter.</div></td></tr>";
       return;
     }
     body.innerHTML = rows.map(function (a) {
