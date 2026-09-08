@@ -484,6 +484,61 @@
     return r.data || [];
   }
 
+  // Saved objective templates ("run this same analysis monthly") —
+  // real, client-writable rows (migrations/0015_objective_templates.sql),
+  // not derived telemetry, so these go through RLS with the caller's own
+  // token like policies/approvals/shadow_tools, not a service-role-only
+  // Edge Function. Open to any workspace member, same as orchestrating
+  // itself. Returns null for the read-only demo workspace.
+  async function listTemplates() {
+    await ready;
+    if (currentWorkspaceId === DEMO_WORKSPACE_ID) return null;
+    var r = await sb.from("objective_templates")
+      .select("id, name, objective, departments, sources, auto_route, agent_models, created_at, last_used_at")
+      .eq("workspace_id", currentWorkspaceId)
+      .order("created_at", { ascending: false });
+    if (r.error) throw r.error;
+    return r.data || [];
+  }
+
+  // opts: { name, objective, departments, sources, autoRoute, agentModels }
+  // Returns the newly-inserted row (with its real id) so the caller can
+  // add it to a local list without a second round trip.
+  async function saveTemplate(opts) {
+    requireOwnWorkspace();
+    var r = await sb.from("objective_templates").insert({
+      workspace_id: currentWorkspaceId,
+      created_by: currentUser ? currentUser.id : null,
+      name: opts.name,
+      objective: opts.objective,
+      departments: opts.departments || [],
+      sources: opts.sources || [],
+      auto_route: !!opts.autoRoute,
+      agent_models: opts.agentModels || {}
+    }).select().single();
+    if (r.error) throw r.error;
+    return r.data;
+  }
+
+  async function deleteTemplate(id) {
+    requireOwnWorkspace();
+    var r = await sb.from("objective_templates").delete()
+      .eq("workspace_id", currentWorkspaceId).eq("id", id).select();
+    if (r.error) throw r.error;
+    assertRowsChanged(r.data, "delete a template — only workspace members can");
+  }
+
+  // Best-effort "this template was just run" timestamp — never blocks or
+  // fails the actual Orchestrate call it's attached to.
+  async function touchTemplateUsed(id) {
+    try {
+      await sb.from("objective_templates").update({ last_used_at: new Date().toISOString() })
+        .eq("workspace_id", currentWorkspaceId).eq("id", id);
+    } catch (e) {
+      console.error("Failed to update template last_used_at", e);
+    }
+  }
+
   // Admin only (RLS: the workspaces table has no client UPDATE policy at
   // all — this security-definer RPC, migrations/0009, is the sole write
   // path). Changes the enforced Orchestrate cap to the picked plan's
@@ -833,6 +888,10 @@
     getRunHistory: getRunHistory,
     askAuditTrail: askAuditTrail,
     getAuditQaHistory: getAuditQaHistory,
+    listTemplates: listTemplates,
+    saveTemplate: saveTemplate,
+    deleteTemplate: deleteTemplate,
+    touchTemplateUsed: touchTemplateUsed,
     setPlan: setPlan,
     timeAgo: timeAgo,
     timeClock: timeClock,
