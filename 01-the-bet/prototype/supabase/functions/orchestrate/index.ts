@@ -56,6 +56,12 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // scan can find real, repeated requests for an ungoverned model —
 // genuine unmanaged-tool-use signal from this workspace's own real
 // telemetry, not a fixed list of fictional findings.
+//
+// Every completed run (a fresh one or a paused one resumed to
+// completion) also gets archived in full — see recordRun below,
+// migrations/0013_workflow_history.sql — so workflow-history.html can
+// redisplay a past deliverable exactly as it looked, instead of it
+// only ever existing in the browser tab that generated it.
 
 // Objective text and scope size are the only signals available before
 // any agent has run — this is a real, cheap, explainable heuristic, not
@@ -298,6 +304,52 @@ async function recordUsage(workspaceId: string, userId: string) {
     method: "POST",
     body: JSON.stringify({ workspace_id: workspaceId, user_id: userId }),
   });
+}
+
+// Archives a completed run's full deliverable — every agent step, the
+// executive summary, findings, recommendations, and risk flags —
+// exactly what workflow-history.html needs to redisplay it later
+// (migrations/0013_workflow_history.sql). Distinct from recordUsage
+// above (one row, purely for the rate-limit check) and from logCall
+// (one row per individual agent call, for spend telemetry) — this is
+// the one durable copy of what the run actually produced. Called once,
+// right alongside recordUsage, at both real completion points (a fresh
+// run finishing, or a paused run resumed to completion).
+async function recordRun(
+  ctx: RunCtx,
+  result: { executiveSummary: string; steps: RunCtx["steps"]; findings: string[]; recommendations: unknown[]; riskFlags: string[] },
+  model: string,
+  wasPaused: boolean,
+  approvalId: string | null,
+) {
+  try {
+    await serviceRoleFetch("orchestrate_runs", {
+      method: "POST",
+      body: JSON.stringify({
+        workspace_id: ctx.workspaceId,
+        user_id: ctx.userId,
+        objective: ctx.objective,
+        departments: ctx.departments,
+        sources: ctx.sources,
+        auto_route: ctx.autoRoute,
+        routing: routingInfo(ctx),
+        steps: result.steps,
+        executive_summary: result.executiveSummary,
+        findings: result.findings,
+        recommendations: result.recommendations,
+        risk_flags: result.riskFlags,
+        model,
+        input_tokens: ctx.totalInputTokens,
+        output_tokens: ctx.totalOutputTokens,
+        substitutions: ctx.substitutions,
+        was_paused: wasPaused,
+        approval_id: approvalId,
+      }),
+    });
+  } catch (err) {
+    // Archiving must never break a real orchestration run.
+    console.error("orchestrate: failed to record run history", err);
+  }
 }
 
 // Logs one real agent call's real model + token usage for spend
@@ -618,9 +670,11 @@ async function handleResume(workspaceId: string, userId: string, approvalId: str
           body: JSON.stringify({ resumed_at: new Date().toISOString() }),
         });
         await recordUsage(workspaceId, userId);
+        const finalModel = Array.from(ctx.modelsUsed).join(" · ");
+        await recordRun(ctx, outcome.result, finalModel, true, approvalId);
         return json({
           result: outcome.result,
-          model: Array.from(ctx.modelsUsed).join(" · "),
+          model: finalModel,
           usage: { input_tokens: ctx.totalInputTokens, output_tokens: ctx.totalOutputTokens },
           substitutions: ctx.substitutions,
           routing: routingInfo(ctx),
@@ -727,9 +781,11 @@ Deno.serve(async (req: Request) => {
       }
       if (outcome.kind === "final") {
         await recordUsage(workspaceId, userId);
+        const finalModel = Array.from(ctx.modelsUsed).join(" · ");
+        await recordRun(ctx, outcome.result, finalModel, false, null);
         return json({
           result: outcome.result,
-          model: Array.from(ctx.modelsUsed).join(" · "),
+          model: finalModel,
           usage: { input_tokens: ctx.totalInputTokens, output_tokens: ctx.totalOutputTokens },
           substitutions: ctx.substitutions,
           routing: routingInfo(ctx),
