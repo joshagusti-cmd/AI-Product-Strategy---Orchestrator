@@ -219,6 +219,21 @@
     assertRowsChanged(r.data, "reassign an agent's model — only workspace admins can");
   }
 
+  // Admin only (RLS: migrations/0008, same policy as reassigning a
+  // model) — toggling this off for real removes the agent from the
+  // very next real Orchestrate run (migrations/0016_data_driven_
+  // pipeline_agents.sql, read by supabase/functions/orchestrate/
+  // index.ts): the row stays in the registry, it just isn't part of
+  // the pipeline until re-enabled. Has no real effect on an agent
+  // that was never part of the pipeline (sequence_order is null).
+  async function setAgentEnabled(id, enabled) {
+    requireOwnWorkspace();
+    var r = await sb.from("agents").update({ enabled: enabled, updated_at: new Date().toISOString() })
+      .eq("workspace_id", currentWorkspaceId).eq("id", id).select();
+    if (r.error) throw r.error;
+    assertRowsChanged(r.data, "toggle an agent's real pipeline status — only workspace admins can");
+  }
+
   // Admin or Compliance Owner only (RLS: migrations/0008).
   async function savePolicy(id, patch) {
     requireOwnWorkspace();
@@ -889,6 +904,7 @@
     loadState: loadState,
     getApprovalQueue: getApprovalQueue,
     updateAgentModel: updateAgentModel,
+    setAgentEnabled: setAgentEnabled,
     savePolicy: savePolicy,
     decideApproval: decideApproval,
     decideShadowTool: decideShadowTool,

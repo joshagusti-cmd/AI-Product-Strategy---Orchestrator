@@ -1,25 +1,33 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 // Aiven Orchestrator — real-model orchestration endpoint (Horizon 1 + 2).
-// Makes six real, independent Anthropic API calls — one per Command
-// Center agent, run in the same order the UI narrates (Research →
-// Finance → Ops → Risk & Compliance → Strategy → Executive Writer) —
-// each agent seeing the prior agents' actual output as context, not a
-// single call asked to invent all six steps at once. The final call
-// (the Writer) also synthesizes the run's executive summary, findings,
+// Makes real, independent Anthropic API calls — one per pipeline agent,
+// run in the workspace's real Agent Registry order (Research → Finance
+// → Ops → Risk & Compliance → Strategy → Executive Writer, by default)
+// — each agent seeing the prior agents' actual output as context, not a
+// single call asked to invent every step at once. The final call (the
+// Writer) also synthesizes the run's executive summary, findings,
 // recommendations, and risk flags from everything before it.
 //
-// Model per agent is real per-call routing, driven by the Command
-// Center's per-agent model dropdown: the frontend sends its current
-// `agentModels` selections (display labels, e.g. "Claude Opus 4.8") and
-// each agent's call uses whichever real Claude model that label maps to
-// (see MODEL_LABEL_TO_ID below). AGENT_DEFS' `model`/`label` are just
-// the default routing when the caller sends no override. Two of the
-// four dropdown options (GPT-4o, Gemini 1.5 Pro) aren't real — only an
-// Anthropic key is configured — so a request for either falls back to
-// that agent's Claude default and the response's `substitutions` array
-// tells the frontend exactly what ran instead, so the UI never silently
-// claims a provider it isn't actually calling.
+// The pipeline itself is data-driven (migrations/0016), not a hardcoded
+// array: it's whichever rows in the workspace's real `agents` table
+// (Agent Registry) have `sequence_order` set and `enabled = true`, in
+// that order, with exactly one marked `is_writer` (must run last) and
+// exactly one `is_risk_gate` (the one whose riskFlag the Core policy
+// actually checks) — see loadPipelineAgents below. Editing the registry
+// now genuinely changes what a real run does.
+//
+// Model per agent is real per-call routing, driven by a three-level
+// fallback (see resolveAgentModel): an explicit per-run override (the
+// Command Center's per-agent dropdown) beats the registry's own
+// declared default model, which beats a fixed, always-real Claude
+// default for that agent's role. Only "Claude Sonnet 5" and "Claude
+// Opus 4.8" are real — no OpenAI/Google key is configured, so a
+// registry default or per-run request for anything else (e.g. the
+// seeded Finance/Strategy agents' "GPT-4o") falls back for real, every
+// time, and the response's `substitutions` array tells the frontend
+// exactly what ran instead, so the UI never silently claims a provider
+// it isn't actually calling.
 //
 // Also enforces a per-workspace rolling 24h spend cap (each workspace's
 // `daily_orchestrate_limit`, default 20) using the service role key —
@@ -27,27 +35,28 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // Edge Function by Supabase, no manual secret needed for this part. The
 // cap is looked up and logged server-side so a client can't raise its
 // own limit or erase its own usage history to dodge it. One Orchestrate
-// run still only costs one unit of quota, even though it's now six API
-// calls under the hood.
+// run still only costs one unit of quota, no matter how many real API
+// calls the pipeline takes under the hood.
 //
 // Optional automatic model routing (`autoRoute: true` in the request
 // body) replaces the manual per-agent `agentModels` selections with a
 // real, deterministic cascade-by-risk decision — see computeAutoRoute
 // below — the "cost-based automatic model routing" cascade this
 // product's own pricing model (03-the-margin/cost-curve.md) describes,
-// now actually implemented rather than just manually picked per agent.
+// generalized by pipeline *slot* (gather / gate / synth / writer) so it
+// still works whatever the registry's real agent count or order is.
 //
-// The Policy Editor's Core-tier policy (id: 'compliance' — the tier
-// every Command Center agent belongs to) now actually gates this
-// pipeline, instead of the policies table having no real consumer: if
-// that policy's autonomy is "Approval-required" or "Two-gate" and the
-// Risk & Compliance Agent's real risk flag scores at or above its
-// risk_threshold, the run pauses right there — the Strategy and Writer
-// calls (and their real API cost) don't happen until a human approves
-// it in the Approval Queue (or the Command Center's own approval
-// panel). Rejecting it ends the run for real: no executive deliverable
-// is ever generated. See shouldPauseForPolicy/createPendingApproval/
-// handleResume below, and migrations/0011_policy_gated_approvals.sql.
+// The Policy Editor's Core-tier policy (id: 'compliance') now actually
+// gates this pipeline, instead of the policies table having no real
+// consumer: if that policy's autonomy is "Approval-required" or
+// "Two-gate" and the risk-gate agent's real risk flag scores at or
+// above its risk_threshold, the run pauses right there — every agent
+// after it (and their real API cost) doesn't run until a human
+// approves it in the Approval Queue (or the Command Center's own
+// approval panel). Rejecting it ends the run for real: no executive
+// deliverable is ever generated. See shouldPauseForPolicy/
+// createPendingApproval/handleResume below, and
+// migrations/0011_policy_gated_approvals.sql.
 //
 // Every silent substitution above (a request for a model with no real
 // key configured) also leaves a real trace, not just the frontend's
@@ -84,15 +93,21 @@ const RISK_KEYWORDS = [
 const RISK_SEVERITY_SCORE: Record<string, number> = { Low: 25, Medium: 60, High: 90 };
 
 type AutoTier = "baseline" | "elevated" | "high";
+type PipelineSlot = "gather" | "gate" | "synth" | "writer";
 
 // Three-tier cascade mirroring the Leader/Filler/Killer cost model this
 // whole product is built around: cheap model for routine, low-stakes
 // work; escalate to a more capable model only where risk/complexity
-// signals actually warrant the extra cost and latency.
-const AUTO_ROUTE_TIERS: Record<AutoTier, Record<string, string>> = {
-  baseline: { research: "claude-haiku-4-5", finance: "claude-haiku-4-5", ops: "claude-haiku-4-5", risk: "claude-sonnet-5", strategy: "claude-sonnet-5", writer: "claude-sonnet-5" },
-  elevated: { research: "claude-sonnet-5", finance: "claude-sonnet-5", ops: "claude-sonnet-5", risk: "claude-opus-4-8", strategy: "claude-sonnet-5", writer: "claude-sonnet-5" },
-  high: { research: "claude-sonnet-5", finance: "claude-sonnet-5", ops: "claude-sonnet-5", risk: "claude-opus-4-8", strategy: "claude-opus-4-8", writer: "claude-opus-4-8" },
+// signals actually warrant the extra cost and latency. Keyed by pipeline
+// *slot* rather than a fixed agent id, so this still works whatever the
+// workspace's real Agent Registry pipeline shape is — every agent
+// before the risk gate is "gather," the risk-gate agent itself is
+// "gate," everything after it but before the writer is "synth," and the
+// writer is "writer."
+const AUTO_ROUTE_TIERS: Record<AutoTier, Record<PipelineSlot, string>> = {
+  baseline: { gather: "claude-haiku-4-5", gate: "claude-sonnet-5", synth: "claude-sonnet-5", writer: "claude-sonnet-5" },
+  elevated: { gather: "claude-sonnet-5", gate: "claude-opus-4-8", synth: "claude-sonnet-5", writer: "claude-sonnet-5" },
+  high: { gather: "claude-sonnet-5", gate: "claude-opus-4-8", synth: "claude-opus-4-8", writer: "claude-opus-4-8" },
 };
 
 function computeAutoRoute(objective: string, departments: string[], sources: string[]) {
@@ -109,7 +124,7 @@ function computeAutoRoute(objective: string, departments: string[], sources: str
     tier = "baseline";
   }
 
-  return { tier, matchedKeywords, complexityScore, modelsByAgent: AUTO_ROUTE_TIERS[tier] };
+  return { tier, matchedKeywords, complexityScore, modelsBySlot: AUTO_ROUTE_TIERS[tier] };
 }
 
 const CORS_HEADERS = {
@@ -118,43 +133,95 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-// The six Command Center agents, in execution order. `model`/`label` are
-// the default routing — Opus 4.8 for the highest-stakes step (governance
-// risk screening), Sonnet 5 for everything else — used whenever the
-// caller doesn't override an agent via `agentModels` in the request body.
-const AGENT_DEFS = [
-  { id: "research", name: "Research & Data Agent", model: "claude-sonnet-5", label: "Claude Sonnet 5", role: "pulls and reconciles data across connected systems" },
-  { id: "finance", name: "Finance Agent", model: "claude-sonnet-5", label: "Claude Sonnet 5", role: "analyzes cost structure, margin, and variance" },
-  { id: "ops", name: "Operations Agent", model: "claude-sonnet-5", label: "Claude Sonnet 5", role: "maps process cycle times and bottlenecks" },
-  { id: "risk", name: "Risk & Compliance Agent", model: "claude-opus-4-8", label: "Claude Opus 4.8", role: "screens findings against governance policy; must flag exactly one realistic governance/compliance risk that would require human approval before anything ships externally" },
-  { id: "strategy", name: "Strategy Agent", model: "claude-sonnet-5", label: "Claude Sonnet 5", role: "synthesizes findings into prioritized recommendations" },
-  { id: "writer", name: "Executive Writer Agent", model: "claude-sonnet-5", label: "Claude Sonnet 5", role: "drafts the final executive-ready action plan" },
-] as const;
-
-// Real Claude model each dropdown label maps to. The dropdown also
-// offers "GPT-4o" and "Gemini 1.5 Pro" (illustrative multi-provider
+// Real Claude model each dropdown/registry label maps to. The dropdown
+// also offers "GPT-4o" and "Gemini 1.5 Pro" (illustrative multi-provider
 // options from the original design) — neither has a real key configured,
 // so they're deliberately absent here and any request for them falls
-// back to the agent's default (see resolveAgentModel below).
+// back to the agent's safe default (see resolveAgentModel below).
 const MODEL_LABEL_TO_ID: Record<string, string> = {
   "Claude Sonnet 5": "claude-sonnet-5",
   "Claude Opus 4.8": "claude-opus-4-8",
 };
 
-function resolveAgentModel(agent: (typeof AGENT_DEFS)[number], requestedLabel: unknown) {
-  if (typeof requestedLabel === "string" && MODEL_LABEL_TO_ID[requestedLabel]) {
-    return { modelId: MODEL_LABEL_TO_ID[requestedLabel], label: requestedLabel };
+// One real pipeline agent, loaded from the workspace's own Agent
+// Registry row (migrations/0016) rather than a hardcoded array.
+type PipelineAgent = {
+  id: string;
+  name: string;
+  declaredModel: string; // the registry's stated default label, e.g. "Claude Sonnet 5" — or, deliberately, "GPT-4o"
+  role: string; // reused from the registry's own `can` column, which already held this exact prompt-role sentence
+  isWriter: boolean;
+  isRiskGate: boolean;
+  slot: PipelineSlot;
+};
+
+// Loads the workspace's real, ordered pipeline from Agent Registry:
+// every row with `sequence_order` set and `enabled = true`, in that
+// order. Validates the structural invariants the rest of this file
+// depends on (exactly one writer, exactly one risk gate, writer last)
+// so a bad manual edit to the registry fails loudly and safely here,
+// rather than silently running a broken or ungoverned pipeline.
+async function loadPipelineAgents(workspaceId: string): Promise<PipelineAgent[] | { error: string }> {
+  const resp = await serviceRoleFetch(
+    `agents?workspace_id=eq.${workspaceId}&sequence_order=not.is.null&enabled=eq.true&select=id,name,model,can,is_writer,is_risk_gate&order=sequence_order.asc`,
+  );
+  if (!resp.ok) return { error: "Failed to load this workspace's Agent Registry pipeline." };
+  const rows = await resp.json();
+  if (!rows.length) {
+    return { error: "This workspace's Agent Registry has no agents enabled in the real pipeline. Enable at least one in Agent Registry." };
   }
-  const substitution = typeof requestedLabel === "string" && requestedLabel !== agent.label
-    ? { agentId: agent.id, agentName: agent.name, requested: requestedLabel, used: agent.label }
-    : null;
-  return { modelId: agent.model, label: agent.label, substitution };
+  if (rows.filter((r: { is_writer: boolean }) => r.is_writer).length !== 1) {
+    return { error: "The real pipeline must have exactly one agent marked as the final Writer step — check Agent Registry." };
+  }
+  if (rows.filter((r: { is_risk_gate: boolean }) => r.is_risk_gate).length !== 1) {
+    return { error: "The real pipeline must have exactly one agent marked as the Risk & Compliance gate — check Agent Registry." };
+  }
+  if (!rows[rows.length - 1].is_writer) {
+    return { error: "The Writer agent must have the highest sequence order in Agent Registry — it has to run last." };
+  }
+  const gateIndex = rows.findIndex((r: { is_risk_gate: boolean }) => r.is_risk_gate);
+  return rows.map((r: { id: string; name: string; model: string; can: string; is_writer: boolean; is_risk_gate: boolean }, i: number) => ({
+    id: r.id,
+    name: r.name,
+    declaredModel: r.model,
+    role: r.can,
+    isWriter: r.is_writer,
+    isRiskGate: r.is_risk_gate,
+    slot: (r.is_writer ? "writer" : r.is_risk_gate ? "gate" : i < gateIndex ? "gather" : "synth") as PipelineSlot,
+  }));
 }
 
-// Tool schema for the five non-writer agents — just this agent's own
-// step. `riskFlag` is only ever populated by the risk agent (enforced
-// by that agent's prompt, not by the schema, so the same tool works for
-// all five).
+// The one fallback that can never itself be an unreal label, since it's
+// not admin-editable: a fixed, always-real Claude model for this
+// agent's structural role (Opus 4.8 for the risk gate — the
+// highest-stakes step — Sonnet 5 for everything else).
+function safeFallbackFor(agent: PipelineAgent): { modelId: string; label: string } {
+  return agent.isRiskGate
+    ? { modelId: "claude-opus-4-8", label: "Claude Opus 4.8" }
+    : { modelId: "claude-sonnet-5", label: "Claude Sonnet 5" };
+}
+
+// Three-level resolution: an explicit per-run override beats the
+// registry's own declared default, which beats the agent's safe
+// fallback. A requested label with no real key configured — whether
+// that request came from a per-run override or the registry's own
+// default — falls all the way to the safe fallback and records a real
+// substitution either way.
+function resolveAgentModel(agent: PipelineAgent, requestedLabel: unknown) {
+  if (typeof requestedLabel === "string" && MODEL_LABEL_TO_ID[requestedLabel]) {
+    return { modelId: MODEL_LABEL_TO_ID[requestedLabel], label: requestedLabel, substitution: null as { agentId: string; agentName: string; requested: string; used: string } | null };
+  }
+  const fallback = safeFallbackFor(agent);
+  const substitution = typeof requestedLabel === "string" && requestedLabel !== fallback.label
+    ? { agentId: agent.id, agentName: agent.name, requested: requestedLabel, used: fallback.label }
+    : null;
+  return { modelId: fallback.modelId, label: fallback.label, substitution };
+}
+
+// Tool schema for every non-writer agent — just this agent's own step.
+// `riskFlag` is only ever populated by the risk-gate agent (enforced by
+// that agent's prompt, not by the schema, so the same tool works for
+// every non-writer step).
 const STEP_TOOL = {
   name: "submit_agent_step",
   description: "Return this agent's single finding for the run.",
@@ -398,7 +465,7 @@ async function logCall(
 }
 
 // Reads the workspace's Core-tier policy (id: 'compliance' — the tier
-// every Command Center agent belongs to; see migrations/0011). Returns
+// every real pipeline agent belongs to; see migrations/0011). Returns
 // null if it's missing (e.g. hand-edited out of the demo data) so the
 // gate fails OPEN — the run completes exactly as it did before this
 // feature existed, rather than a deleted seed row silently wedging
@@ -418,7 +485,7 @@ async function getCompliancePolicy(workspaceId: string): Promise<{ autonomy: str
 // never block. A "Two-gate" policy's second gate (approval to
 // distribute externally) isn't modeled here — the Command Center has no
 // separate "send externally" action to gate — so both block the same
-// single point, before the Strategy/Writer calls.
+// single point, before the agents after the risk gate run.
 function shouldPauseForPolicy(policy: { autonomy: string; risk_threshold: number } | null, riskFlag: { severity?: string }): boolean {
   if (!policy) return false;
   if (policy.autonomy !== "Approval-required" && policy.autonomy !== "Two-gate") return false;
@@ -535,28 +602,28 @@ function routingInfo(ctx: RunCtx) {
     : { mode: "manual" };
 }
 
-// Runs one agent's real Claude call, logs it, and appends its step.
-// For the Risk & Compliance Agent specifically, also evaluates the
-// workspace's Core-tier policy against its riskFlag — pausing the run
-// (kind: "paused") if it crosses the gate, instead of letting Strategy
-// and Writer run (and bill) unconditionally. Used by both a fresh run
-// and handleResume's continuation, so the two can't diverge.
-async function runOneAgent(agent: (typeof AGENT_DEFS)[number], ctx: RunCtx): Promise<AgentOutcome> {
-  const isWriter = agent.id === "writer";
+// Runs one agent's real Claude call, logs it, and appends its step. For
+// the risk-gate agent specifically, also evaluates the workspace's
+// Core-tier policy against its riskFlag — pausing the run
+// (kind: "paused") if it crosses the gate, instead of letting the rest
+// of the pipeline run (and bill) unconditionally. Used by both a fresh
+// run and handleResume's continuation, so the two can't diverge.
+async function runOneAgent(agent: PipelineAgent, ctx: RunCtx): Promise<AgentOutcome> {
+  const isWriter = agent.isWriter;
   const priorContext = ctx.steps.length
     ? "Prior agents' findings so far, in order:\n" +
       ctx.steps.map((s) => `- ${s.agentName}: ${s.title} — ${s.detail}`).join("\n")
     : "You are the first agent in this run — no prior findings yet.";
 
   const system = isWriter
-    ? `You are the Executive Writer Agent in the Aiven Orchestrator, a governed multi-agent enterprise workflow. Your role: ${agent.role}. You are the last agent in a real six-agent pipeline — draft the final executive-ready synthesis from everything the other five agents actually found. Do not claim to have queried real live data yourself; this is a governed simulation run for a product demo, but be concrete and specific, grounded in the prior agents' stated findings. Call the submit_final_result tool exactly once.`
-    : `You are the ${agent.name} in the Aiven Orchestrator, a governed multi-agent enterprise workflow. Your role: ${agent.role}. You are one agent in a real six-agent pipeline — see the prior agents' actual findings below and build on them where relevant (don't repeat what they already covered). Be concrete and specific — invent a plausible, clearly-illustrative finding, metric, or figure appropriate to the objective, as if you had actually queried the given data sources. Do not claim to have queried real live data; this is a governed simulation run for a product demo.${agent.id === "risk" ? " You MUST set riskFlag with exactly one realistic governance/compliance risk that would require human approval before anything ships externally." : " Leave riskFlag unset — that field is only for the Risk & Compliance Agent."} Call the submit_agent_step tool exactly once with your one finding.`;
+    ? `You are the Executive Writer Agent in the Aiven Orchestrator, a governed multi-agent enterprise workflow. Your role: ${agent.role}. You are the last agent in a real pipeline — draft the final executive-ready synthesis from everything the other agents actually found. Do not claim to have queried real live data yourself; this is a governed simulation run for a product demo, but be concrete and specific, grounded in the prior agents' stated findings. Call the submit_final_result tool exactly once.`
+    : `You are the ${agent.name} in the Aiven Orchestrator, a governed multi-agent enterprise workflow. Your role: ${agent.role}. You are one agent in a real pipeline — see the prior agents' actual findings below and build on them where relevant (don't repeat what they already covered). Be concrete and specific — invent a plausible, clearly-illustrative finding, metric, or figure appropriate to the objective, as if you had actually queried the given data sources. Do not claim to have queried real live data; this is a governed simulation run for a product demo.${agent.isRiskGate ? " You MUST set riskFlag with exactly one realistic governance/compliance risk that would require human approval before anything ships externally." : " Leave riskFlag unset — that field is only for the Risk & Compliance Agent."} Call the submit_agent_step tool exactly once with your one finding.`;
 
   const user = `${ctx.briefing}\n\n${priorContext}`;
 
   const routed = ctx.autoRouteResult
-    ? { modelId: ctx.autoRouteResult.modelsByAgent[agent.id] || agent.model, substitution: null }
-    : resolveAgentModel(agent, ctx.agentModels[agent.id]);
+    ? { modelId: ctx.autoRouteResult.modelsBySlot[agent.slot], substitution: null as { agentId: string; agentName: string; requested: string; used: string } | null }
+    : resolveAgentModel(agent, ctx.agentModels[agent.id] ?? agent.declaredModel);
   if (routed.substitution) ctx.substitutions.push(routed.substitution);
 
   const result = await callAgent({
@@ -571,7 +638,7 @@ async function runOneAgent(agent: (typeof AGENT_DEFS)[number], ctx: RunCtx): Pro
 
   ctx.totalInputTokens += result.usage?.input_tokens || 0;
   ctx.totalOutputTokens += result.usage?.output_tokens || 0;
-  ctx.modelsUsed.add(result.model || agent.model);
+  ctx.modelsUsed.add(result.model || routed.modelId);
 
   await logCall(
     ctx.workspaceId, ctx.userId, agent.id, result.model || routed.modelId, result.usage,
@@ -602,7 +669,7 @@ async function runOneAgent(agent: (typeof AGENT_DEFS)[number], ctx: RunCtx): Pro
     ...(out.riskFlag && out.riskFlag.text ? { riskFlag: out.riskFlag } : {}),
   });
 
-  if (agent.id === "risk" && out.riskFlag && out.riskFlag.text) {
+  if (agent.isRiskGate && out.riskFlag && out.riskFlag.text) {
     const policy = await getCompliancePolicy(ctx.workspaceId);
     if (shouldPauseForPolicy(policy, out.riskFlag)) {
       const runState = {
@@ -620,12 +687,16 @@ async function runOneAgent(agent: (typeof AGENT_DEFS)[number], ctx: RunCtx): Pro
 }
 
 // Continues a run that previously paused for policy approval. A pause
-// only ever happens right after the Risk & Compliance Agent (index 3 of
-// AGENT_DEFS) — Research/Finance/Ops/Risk already ran — so exactly
-// Strategy and Writer remain; there's no arbitrary resume position to
-// track. Requires the approval to belong to the caller's own workspace
-// (the lookup below filters on it directly, since the service role key
-// bypasses RLS) and to be approved and not already resumed.
+// only ever happens right after the workspace's risk-gate agent — every
+// agent before it already ran — so what remains is every real pipeline
+// agent after the risk gate, in the *current* registry order. If the
+// registry changed between pause and resume (an admin reordered or
+// disabled something), loadPipelineAgents' own validation below still
+// applies — a now-invalid pipeline fails this resume loudly rather than
+// silently running something ungoverned. Requires the approval to
+// belong to the caller's own workspace (the lookup below filters on it
+// directly, since the service role key bypasses RLS) and to be approved
+// and not already resumed.
 async function handleResume(workspaceId: string, userId: string, approvalId: string, apiKey: string): Promise<Response> {
   const resp = await serviceRoleFetch(
     `approvals?workspace_id=eq.${workspaceId}&id=eq.${approvalId}&select=*`,
@@ -649,6 +720,14 @@ async function handleResume(workspaceId: string, userId: string, approvalId: str
     return json({ error: "This approval has no run to resume." }, 400);
   }
 
+  const pipeline = await loadPipelineAgents(workspaceId);
+  if ("error" in pipeline) return json({ error: pipeline.error }, 500);
+  const gateIndex = pipeline.findIndex((a) => a.isRiskGate);
+  const remaining = pipeline.slice(gateIndex + 1);
+  if (!remaining.length) {
+    return json({ error: "Nothing to resume — the risk-gate agent is the last enabled step in Agent Registry." }, 500);
+  }
+
   const objective = String(rs.objective || "");
   const departments: string[] = Array.isArray(rs.departments) ? rs.departments : [];
   const sources: string[] = Array.isArray(rs.sources) ? rs.sources : [];
@@ -668,7 +747,7 @@ async function handleResume(workspaceId: string, userId: string, approvalId: str
   };
 
   try {
-    for (const agent of AGENT_DEFS.slice(4)) { // Strategy, Writer
+    for (const agent of remaining) {
       const outcome = await runOneAgent(agent, ctx);
       if (outcome.kind === "final") {
         await serviceRoleFetch(`approvals?workspace_id=eq.${workspaceId}&id=eq.${approvalId}`, {
@@ -690,9 +769,10 @@ async function handleResume(workspaceId: string, userId: string, approvalId: str
           resumedApprovalId: approvalId,
         });
       }
-      // The Strategy/Writer prompts never set riskFlag (only the Risk
-      // agent's does), so this can't recur here in practice — handled
-      // anyway so a second real gate would still work, not get lost.
+      // A real pipeline could in principle have a second risk-gate-like
+      // pause after the first (e.g. a registry reordered to put the gate
+      // earlier) — handled anyway so a second real gate would still
+      // work, not get lost.
       if (outcome.kind === "paused") {
         return json({ paused: true, approvalId: outcome.approvalId, steps: ctx.steps, riskFlag: outcome.riskFlag, routing: routingInfo(ctx) });
       }
@@ -753,6 +833,11 @@ Deno.serve(async (req: Request) => {
     return json({ error: rateLimitError.error }, rateLimitError.status);
   }
 
+  const pipeline = await loadPipelineAgents(workspaceId);
+  if ("error" in pipeline) {
+    return json({ error: pipeline.error }, 500);
+  }
+
   const objective = body.objective;
   const departments = Array.isArray(body.departments) ? body.departments as string[] : [];
   const sources = Array.isArray(body.sources) ? body.sources as string[] : [];
@@ -776,10 +861,10 @@ Deno.serve(async (req: Request) => {
   };
 
   try {
-    for (const agent of AGENT_DEFS) {
+    for (const agent of pipeline) {
       const outcome = await runOneAgent(agent, ctx);
       if (outcome.kind === "paused") {
-        // A pause still means Research/Finance/Ops/Risk already made 4
+        // A pause still means every agent before the gate already made
         // real, billed Anthropic calls — this must count against the
         // daily cap now, not only if/when the run is later resumed
         // (handleResume no longer records usage itself, so a run is
