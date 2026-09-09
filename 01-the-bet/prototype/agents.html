@@ -15,6 +15,11 @@
   .filter-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .filter-row .filter-label { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-mute); flex-shrink: 0; }
   select.control.model-col { width: auto; min-width: 160px; }
+  .pipeline-tag { font-family: var(--mono); font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 5px; border: 1px solid; display: inline-block; margin-left: 4px; white-space: nowrap; }
+  .pipeline-tag.writer { color: var(--accent); border-color: var(--accent-dim); }
+  .pipeline-tag.gate { color: var(--critical); border-color: var(--critical); }
+  .pipeline-toggle-label { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-mute); margin-top: 4px; cursor: pointer; }
+  .pipeline-toggle-label input { accent-color: var(--accent); }
   @media (max-width: 980px) { .kpi-strip { grid-template-columns: repeat(2, 1fr); } }
 </style>
 </head>
@@ -53,7 +58,7 @@
 <div class="shell">
   <div class="page-head">
     <h1>&gt; Agent Registry</h1>
-    <p>Every agent the orchestrator governs, across every connected department — what it's allowed to do, what it can never do on its own, and who has to sign off before it acts. Reassigning a model here re-evaluates governance the same way it does from the Command Center.</p>
+    <p>Every agent the orchestrator governs, across every connected department — what it's allowed to do, what it can never do on its own, and who has to sign off before it acts. Reassigning a model here re-evaluates governance the same way it does from the Command Center. The <b>Pipeline</b> column is real, too: the real Command Center run reads this registry directly — toggling an agent off genuinely removes it from the very next run, without deleting it.</p>
   </div>
 
   <section class="kpi-strip" aria-label="Registry metrics">
@@ -75,7 +80,7 @@
     <div class="panel-body tight scroll-x">
       <table class="data" id="agent-table">
         <thead><tr>
-          <th>Agent</th><th>Department</th><th>Tier</th><th>Model</th><th>Status</th><th>Approval needed</th><th>Last reviewed</th>
+          <th>Agent</th><th>Department</th><th>Tier</th><th>Pipeline</th><th>Model</th><th>Status</th><th>Approval needed</th><th>Last reviewed</th>
         </tr></thead>
         <tbody id="agent-rows"></tbody>
       </table>
@@ -149,15 +154,31 @@
     });
     var body = document.getElementById("agent-rows");
     if (!rows.length) {
-      body.innerHTML = "<tr><td colspan='7'><div class='empty-state'>No agents match this filter.</div></td></tr>";
+      body.innerHTML = "<tr><td colspan='8'><div class='empty-state'>No agents match this filter.</div></td></tr>";
       return;
     }
+    var isAdmin = Aiven.auth.isAdmin();
     body.innerHTML = rows.map(function (a) {
+      // Real pipeline status, straight off the registry row (migrations/
+      // 0016) — sequence_order is only set for agents the real
+      // Orchestrate Edge Function actually runs, in that order.
+      var isStructural = a.is_writer || a.is_risk_gate;
+      var toggleDisabledAttr = isStructural
+        ? " disabled title='The pipeline needs exactly one Writer and one Risk gate — this role can\\'t be disabled here'"
+        : (isAdmin ? "" : " disabled title='Only workspace admins can toggle this'");
+      var pipelineCell = a.sequence_order != null
+        ? "<span class='mono' style='font-size:11px;'>Step " + a.sequence_order + "</span>" +
+          (a.is_writer ? "<span class='pipeline-tag writer'>Writer</span>" : "") +
+          (a.is_risk_gate ? "<span class='pipeline-tag gate'>Risk gate</span>" : "") +
+          "<label class='pipeline-toggle-label'><input type='checkbox' class='pipeline-toggle' data-id='" + a.id + "'" +
+          (a.enabled ? " checked" : "") + toggleDisabledAttr + "> Enabled</label>"
+        : "<span class='muted' style='font-size:11px;'>Not in pipeline</span>";
       return "<tr data-id='" + a.id + "'>" +
         "<td class='name'>" + a.name + "<div class='cap-line can'>" + a.can + "</div><div class='cap-line cannot'>" + a.cannot + "</div></td>" +
         "<td>" + a.dept + "</td>" +
         "<td><span class='tier-pill " + a.tier + "'>" + a.tier + "</span></td>" +
-        "<td><select class='control model-col model-select' data-id='" + a.id + "'" + (Aiven.auth.isAdmin() ? "" : " disabled title='Only workspace admins can reassign a model'") + ">" +
+        "<td>" + pipelineCell + "</td>" +
+        "<td><select class='control model-col model-select' data-id='" + a.id + "'" + (isAdmin ? "" : " disabled title='Only workspace admins can reassign a model'") + ">" +
         MODELS.map(function (m) { return "<option" + (m === a.model ? " selected" : "") + ">" + m + "</option>"; }).join("") +
         "</select></td>" +
         "<td><span class='status-pill " + a.status + "'><span class='dot'></span>" + a.status + "</span></td>" +
@@ -183,6 +204,27 @@
           Aiven.toast("Couldn't reassign " + agent.name + ": " + e.message);
         } finally {
           sel.disabled = false;
+        }
+      });
+    });
+
+    Array.prototype.forEach.call(body.querySelectorAll(".pipeline-toggle"), function (cb) {
+      cb.addEventListener("change", async function () {
+        var agent = state.agents.find(function (a) { return a.id === cb.dataset.id; });
+        var enabled = cb.checked;
+        cb.disabled = true;
+        try {
+          await Aiven.setAgentEnabled(agent.id, enabled);
+          agent.enabled = enabled;
+          await Aiven.addAudit({ actor: "Orchestrator Core", model: "—", risk: "—",
+            action: (enabled ? "Enabled " : "Disabled ") + agent.name + " in the real Orchestrate pipeline",
+            detail: enabled ? "Will run on the next real Orchestrate call." : "Removed from the next real Orchestrate call, without deleting the registry row." });
+          Aiven.toast(agent.name + (enabled ? " enabled" : " disabled") + " in the real pipeline");
+        } catch (e) {
+          cb.checked = !enabled;
+          Aiven.toast("Couldn't update " + agent.name + ": " + e.message);
+        } finally {
+          cb.disabled = false;
         }
       });
     });

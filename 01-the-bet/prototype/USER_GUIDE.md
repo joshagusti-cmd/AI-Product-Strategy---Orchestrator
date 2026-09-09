@@ -54,6 +54,8 @@ Only two models are real per-call routing targets today — **Claude Sonnet 5** 
 
 **Filtering.** Filter by tier, or by department — the department chips are built from whatever's actually in your workspace's registry, not a fixed list. Click the **Departments covered** KPI tile to jump straight to the department filter.
 
+**The Pipeline column is real control, not just a label.** For the agents that make up the Command Center's real pipeline, this column shows their real step number and, where it applies, a **Writer** or **Risk gate** tag. The **Enabled** checkbox next to it (Admin-only) genuinely removes that agent from the very next real Orchestrate run — it stays in the registry, it just doesn't run until you turn it back on. The Writer and Risk-gate roles can't be disabled here, since the pipeline needs exactly one of each to run at all.
+
 ---
 
 ## Policies (`policies.html`)
