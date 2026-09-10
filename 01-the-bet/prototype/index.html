@@ -1242,6 +1242,12 @@
       toast((subs.length === 1 ? "1 agent" : subs.length + " agents") + " requested a model with no key configured — ran on: " + subText);
     }
 
+    var redactions = response.redactions || [];
+    if (redactions.length) {
+      var redText = redactions.map(function (r) { return r.count + " " + r.type; }).join(", ");
+      toast("Redacted " + redText + " from this run's objective/output before it reached Claude or was stored.");
+    }
+
     var routing = response.routing;
     if (routing && routing.mode === "auto") {
       var tierDesc = {
@@ -1335,6 +1341,11 @@
       };
       renderApprovals();
       toast("Approval required — Risk & Compliance Agent paused the workflow (policy: " + currentApproval.policyAutonomy + ", threshold " + currentApproval.policyThreshold + ").");
+      var pausedRedactions = response.redactions || [];
+      if (pausedRedactions.length) {
+        var pausedRedText = pausedRedactions.map(function (r) { return r.count + " " + r.type; }).join(", ");
+        toast("Redacted " + pausedRedText + " from this run's objective/output before it reached Claude or was stored.");
+      }
       return;
     }
 

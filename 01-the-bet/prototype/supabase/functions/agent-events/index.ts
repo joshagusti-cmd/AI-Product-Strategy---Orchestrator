@@ -16,6 +16,10 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // every call here — the same real flag orchestrate/index.ts checks for
 // internal runs. See isEmergencyStopped below.
 //
+// Every reported title/detail/riskFlag.text also goes through the same
+// real PII/secrets redaction orchestrate/index.ts applies to internal
+// agent output before any of it is stored. See redactSensitive below.
+//
 // Authenticated by the agent's own API key (generated client-side, once,
 // at registration in agents.html — see assets/data.js
 // registerExternalAgent), not a Supabase user session: the caller here
@@ -94,6 +98,57 @@ function shouldPause(policy: { autonomy: string; risk_threshold: number } | null
   return score >= policy.risk_threshold;
 }
 
+// Real PII/secrets redaction — same deterministic pattern set and same
+// honesty as orchestrate/index.ts's own copy (duplicated, not shared,
+// per this file's no-shared-imports convention above). Applied to every
+// text field an external agent reports (title/detail/riskFlag.text)
+// before it's ever stored in agent_events, approvals, or audit_log —
+// the one real input surface this endpoint has, since Aiven never sees
+// that agent's own prompts or internal state, only what it chooses to
+// report here.
+type Redaction = { type: string; count: number };
+
+const REDACTION_PATTERNS: Array<{ type: string; re: RegExp; validate?: (raw: string) => boolean }> = [
+  { type: "SSN", re: /\b\d{3}-\d{2}-\d{4}\b/g },
+  {
+    type: "API_KEY",
+    re: /\b(?:sk-ant-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|gh[opsu]_[A-Za-z0-9]{30,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,})\b/g,
+  },
+  { type: "CREDIT_CARD", re: /\b(?:\d[ -]?){13,19}\b/g, validate: (raw) => luhnValid(raw.replace(/[ -]/g, "")) },
+  { type: "EMAIL", re: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g },
+  { type: "PHONE", re: /\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g },
+];
+
+function luhnValid(digits: string): boolean {
+  if (!/^\d{13,19}$/.test(digits)) return false;
+  let sum = 0;
+  let alt = false;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let n = parseInt(digits[i], 10);
+    if (alt) {
+      n *= 2;
+      if (n > 9) n -= 9;
+    }
+    sum += n;
+    alt = !alt;
+  }
+  return sum % 10 === 0;
+}
+
+function redactSensitive(text: string): { text: string; redactions: Redaction[] } {
+  if (!text) return { text: text || "", redactions: [] };
+  const counts: Record<string, number> = {};
+  let out = text;
+  for (const { type, re, validate } of REDACTION_PATTERNS) {
+    out = out.replace(re, (m) => {
+      if (validate && !validate(m)) return m;
+      counts[type] = (counts[type] || 0) + 1;
+      return `[REDACTED:${type}]`;
+    });
+  }
+  return { text: out, redactions: Object.keys(counts).map((type) => ({ type, count: counts[type] })) };
+}
+
 // Workspace-wide emergency stop (migrations/0018) — checked for every
 // call this function gets, using the same real flag orchestrate/index.ts
 // checks for internal runs. Two real effects here: check_approval always
@@ -166,14 +221,28 @@ Deno.serve(async (req: Request) => {
   // watches) and `gated: true` is returned. The external agent's own
   // code decides what to do with that; Aiven has no way to stop it
   // from proceeding anyway if it chooses to ignore the answer.
-  const title = body.title;
-  if (!title || typeof title !== "string") {
+  const rawTitle = body.title;
+  if (!rawTitle || typeof rawTitle !== "string") {
     return json({ error: "`title` (string) is required." }, 400);
   }
-  const detail = typeof body.detail === "string" ? body.detail : null;
-  const riskFlag = body.riskFlag && typeof body.riskFlag === "object"
+  const rawDetail = typeof body.detail === "string" ? body.detail : null;
+  const rawRiskFlag = body.riskFlag && typeof body.riskFlag === "object"
     ? body.riskFlag as { severity?: string; text?: string }
     : null;
+
+  // Redact before anything below ever stores or forwards this text.
+  const titleR = redactSensitive(rawTitle);
+  const detailR = rawDetail ? redactSensitive(rawDetail) : null;
+  const riskTextR = rawRiskFlag && rawRiskFlag.text ? redactSensitive(rawRiskFlag.text) : null;
+  const title = titleR.text;
+  const detail = detailR ? detailR.text : null;
+  const riskFlag = rawRiskFlag ? { ...rawRiskFlag, text: riskTextR ? riskTextR.text : rawRiskFlag.text } : null;
+  const redactions: Redaction[] = [];
+  for (const r of [...titleR.redactions, ...(detailR ? detailR.redactions : []), ...(riskTextR ? riskTextR.redactions : [])]) {
+    const existing = redactions.find((x) => x.type === r.type);
+    if (existing) existing.count += r.count;
+    else redactions.push({ type: r.type, count: r.count });
+  }
 
   await serviceRoleFetch(`agents?workspace_id=eq.${agent.workspaceId}&id=eq.${agent.agentId}`, {
     method: "PATCH",
@@ -221,6 +290,9 @@ Deno.serve(async (req: Request) => {
   // Mirrored into audit_log too, so this shows up in the existing
   // Audit Trail UI immediately — no separate "external events" view to
   // build or remember to check.
+  const redactionNote = redactions.length
+    ? `Redacted ${redactions.map((r) => `${r.count} ${r.type}`).join(", ")} before storing this event.`
+    : null;
   await serviceRoleFetch("audit_log", {
     method: "POST",
     body: JSON.stringify({
@@ -229,9 +301,9 @@ Deno.serve(async (req: Request) => {
       action: title,
       model: null,
       risk: riskFlag?.severity || null,
-      detail: gated ? [detail, "Paused for approval before proceeding."].filter(Boolean).join(" — ") : detail,
+      detail: [detail, gated ? "Paused for approval before proceeding." : null, redactionNote].filter(Boolean).join(" — ") || null,
     }),
   });
 
-  return json({ ok: true, gated, approvalId, emergencyStop: stopped });
+  return json({ ok: true, gated, approvalId, emergencyStop: stopped, redactions });
 });
