@@ -71,6 +71,11 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // migrations/0013_workflow_history.sql — so workflow-history.html can
 // redisplay a past deliverable exactly as it looked, instead of it
 // only ever existing in the browser tab that generated it.
+//
+// A workspace-wide emergency stop (migrations/0018) is checked first,
+// before any of the above — one admin-flipped switch (the Workspace
+// modal) that freezes both a fresh run and a resume until it's lifted.
+// See checkEmergencyStop below.
 
 // Objective text and scope size are the only signals available before
 // any agent has run — this is a real, cheap, explainable heuristic, not
@@ -343,6 +348,24 @@ async function resolveWorkspaceId(userId: string): Promise<string | null> {
     await new Promise((res) => setTimeout(res, 500));
   }
   return null;
+}
+
+// Workspace-wide emergency stop (migrations/0018) — the bigger, blunter
+// sibling of the per-agent Enabled toggle in Agent Registry. An admin
+// flips workspaces.emergency_stop via the set_emergency_stop RPC
+// (assets/data.js setEmergencyStop, surfaced in the Workspace modal).
+// Checked once, right after the workspace resolves, before either a
+// fresh run or a resume can make a single further real Anthropic call.
+// Fails open on a lookup error, same reasoning as getCompliancePolicy
+// below — a transient read failure here must not silently wedge every
+// future run in the workspace.
+async function checkEmergencyStop(workspaceId: string): Promise<string | null> {
+  const resp = await serviceRoleFetch(`workspaces?select=emergency_stop&id=eq.${workspaceId}`);
+  if (!resp.ok) return null;
+  const rows = await resp.json();
+  return rows[0]?.emergency_stop
+    ? "This workspace's emergency stop is active — Orchestrate is frozen (new runs and resuming a paused run both) until an admin turns it off in the Workspace panel."
+    : null;
 }
 
 // Checks the workspace's rolling-24h Orchestrate usage against its cap.
@@ -804,6 +827,9 @@ Deno.serve(async (req: Request) => {
   if (!workspaceId) {
     return json({ error: "Could not resolve your workspace. Try reloading the page and signing in again." }, 500);
   }
+
+  const stopError = await checkEmergencyStop(workspaceId);
+  if (stopError) return json({ error: stopError }, 423);
 
   let body: Record<string, unknown>;
   try {
