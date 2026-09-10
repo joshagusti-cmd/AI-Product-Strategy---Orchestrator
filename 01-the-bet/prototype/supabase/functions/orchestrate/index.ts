@@ -85,6 +85,13 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // modal) that freezes both a fresh run and a resume until it's lifted.
 // See checkEmergencyStop below.
 //
+// A workspace can also configure a real webhook URL (migrations/0020,
+// the Workspace modal) that gets a real HTTP POST the moment a run
+// actually pauses for approval — the one event nobody is otherwise
+// notified of, since the Approval Queue has to be manually watched
+// today. See fireWebhook below and its two call sites (a fresh run
+// pausing, and a resumed run pausing again).
+//
 // Real PII/secrets redaction runs on both sides of every real Anthropic
 // call: the objective before it's ever prompted to an agent (input),
 // and every agent's title/detail/summary/findings/recommendations/
@@ -723,6 +730,73 @@ async function logPromptInjectionFlags(workspaceId: string, flags: InjectionFlag
   }
 }
 
+// Fires a real HTTP POST to the workspace's configured webhook
+// (migrations/0020), if one is set and enabled, the moment a run
+// actually pauses for approval. Best-effort and non-blocking-safe, same
+// discipline as logCall/recordRun/logRedactions above: a bad URL, a
+// timeout, or a non-2xx response from the receiving endpoint must never
+// break the real orchestration run that triggered it — every failure
+// mode here is caught and swallowed after being recorded. Every real
+// attempt, success or failure, is logged to webhook_deliveries so "is
+// this actually working" has a real answer in the Workspace modal
+// instead of a leap of faith. A workspace with no configured (or
+// disabled) webhook is a silent, cheap no-op — one lookup, no delivery
+// attempt, nothing logged.
+async function fireWebhook(workspaceId: string, eventType: string, payload: Record<string, unknown>) {
+  try {
+    const cfgResp = await serviceRoleFetch(
+      `webhook_endpoints?workspace_id=eq.${workspaceId}&enabled=eq.true&select=url`,
+    );
+    if (!cfgResp.ok) return;
+    const cfgRows = await cfgResp.json();
+    const url = cfgRows[0]?.url;
+    if (!url) return;
+
+    const wsResp = await serviceRoleFetch(`workspaces?select=name&id=eq.${workspaceId}`);
+    const wsRows = wsResp.ok ? await wsResp.json() : [];
+    const workspaceName = wsRows[0]?.name || "Unknown workspace";
+
+    let responseStatus: number | null = null;
+    let success = false;
+    let errorDetail: string | null = null;
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      let resp: Response;
+      try {
+        resp = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ event: eventType, workspaceId, workspaceName, ...payload }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+      responseStatus = resp.status;
+      success = resp.ok;
+      if (!resp.ok) errorDetail = `Webhook endpoint responded ${resp.status}`;
+    } catch (err) {
+      errorDetail = String(err instanceof Error ? err.message : err);
+    }
+
+    await serviceRoleFetch("webhook_deliveries", {
+      method: "POST",
+      body: JSON.stringify({
+        workspace_id: workspaceId,
+        event_type: eventType,
+        url,
+        response_status: responseStatus,
+        success,
+        error_detail: errorDetail,
+      }),
+    });
+  } catch (err) {
+    // Webhook delivery must never break a real orchestration run.
+    console.error("orchestrate: failed to fire webhook", err);
+  }
+}
+
 // Reads the workspace's Core-tier policy (id: 'compliance' — the tier
 // every real pipeline agent belongs to; see migrations/0011). Returns
 // null if it's missing (e.g. hand-edited out of the demo data) so the
@@ -1083,6 +1157,13 @@ async function handleResume(workspaceId: string, userId: string, approvalId: str
       // work, not get lost.
       if (outcome.kind === "paused") {
         await logRedactions(workspaceId, newRedactionsSinceResume());
+        await fireWebhook(workspaceId, "run.paused", {
+          approvalId: outcome.approvalId,
+          objective: ctx.objective,
+          riskSeverity: outcome.riskFlag.severity || null,
+          riskText: outcome.riskFlag.text,
+          timestamp: new Date().toISOString(),
+        });
         return json({ paused: true, approvalId: outcome.approvalId, steps: ctx.steps, riskFlag: outcome.riskFlag, routing: routingInfo(ctx), redactions: ctx.redactions, promptInjectionFlags: ctx.promptInjectionFlags });
       }
     }
@@ -1206,6 +1287,13 @@ Deno.serve(async (req: Request) => {
         // counted exactly once regardless of whether it ever resumes).
         await recordUsage(workspaceId, userId);
         await logRedactions(workspaceId, ctx.redactions);
+        await fireWebhook(workspaceId, "run.paused", {
+          approvalId: outcome.approvalId,
+          objective: ctx.objective,
+          riskSeverity: outcome.riskFlag.severity || null,
+          riskText: outcome.riskFlag.text,
+          timestamp: new Date().toISOString(),
+        });
         return json({
           paused: true,
           approvalId: outcome.approvalId,

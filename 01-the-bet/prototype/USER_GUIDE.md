@@ -25,6 +25,8 @@ Controls you can't use for your role are disabled in the UI, and the same restri
 
 **Emergency Stop.** The Workspace modal also has a real, one-switch kill for a real incident — bigger and blunter than disabling one agent in Agent Registry. An admin turns it on and every new Orchestrate run, every paused-run resume, and every external agent's `check_approval` poll (see **Connecting an agent you already run somewhere else** below) is genuinely frozen, workspace-wide, until an admin turns it off. Every member sees whether it's active and who activated it; only an admin can flip it. It's real for everything Aiven itself runs — it can't reach into an external agent's own code that never checks in first, the same honest limit that control always has.
 
+**Webhook notifications.** The Workspace modal also has a Webhook Notifications section: an admin pastes a plain URL (any endpoint that accepts an HTTP POST — Slack's/Teams' own incoming-webhook URLs work, so does a generic one) and every member can see whether it's configured and its last real delivery status. The moment a run actually pauses for approval, Aiven POSTs a real JSON payload (workspace name, the run's objective, the risk flag's severity and text, the approval id, a timestamp) to that URL — nobody has to be actively watching the Approval Queue to find out a run is waiting on them. Every attempt, success or failure, is logged for real and shown as "last delivery: succeeded/failed, N ago" — not a leap of faith that it's working. Scope today: only a run pausing fires a webhook; there's no "send test webhook" button yet (a client-side test would run into CORS the pasted endpoint likely doesn't handle).
+
 ---
 
 ## Command Center (`index.html`)

@@ -709,6 +709,57 @@
     if (r.error) throw r.error;
   }
 
+  // Workspace-configured webhook notifications (migrations/0020) — real,
+  // admin-only config for the one incoming-webhook URL orchestrate/
+  // index.ts posts a real HTTP request to the moment a run actually
+  // pauses for approval. Direct, client-writable RLS (like
+  // objective_templates), not a security-definer RPC — this is a
+  // dedicated table an admin owns outright, not a shared column on
+  // `workspaces` everyone reads. Returns null for the read-only demo
+  // workspace, and null if nothing is configured yet.
+  async function getWebhookConfig() {
+    await ready;
+    if (currentWorkspaceId === DEMO_WORKSPACE_ID) return null;
+    var r = await sb.from("webhook_endpoints")
+      .select("url, enabled, created_at")
+      .eq("workspace_id", currentWorkspaceId).maybeSingle();
+    if (r.error) throw r.error;
+    return r.data || null;
+  }
+
+  // Admin-only upsert (RLS: insert/update policies both gated by
+  // private.is_workspace_admin) — one row per workspace (primary key),
+  // so saving a new URL replaces the old config rather than
+  // accumulating rows.
+  async function setWebhookConfig(url, enabled) {
+    requireOwnWorkspace();
+    var r = await sb.from("webhook_endpoints").upsert({
+      workspace_id: currentWorkspaceId,
+      url: url,
+      enabled: !!enabled,
+      created_by: currentUser ? currentUser.id : null,
+      updated_at: new Date().toISOString()
+    }, { onConflict: "workspace_id" }).select();
+    if (r.error) throw r.error;
+    assertRowsChanged(r.data, "configure a webhook — only workspace admins can");
+  }
+
+  // Real delivery log (migrations/0020) — every actual outbound POST
+  // attempt orchestrate/index.ts made, win or lose, so "is this thing
+  // even working" has a real answer instead of a leap of faith.
+  // Most-recent-first, capped at 5 — just enough for a status readout.
+  async function getWebhookDeliveries() {
+    await ready;
+    if (currentWorkspaceId === DEMO_WORKSPACE_ID) return null;
+    var r = await sb.from("webhook_deliveries")
+      .select("event_type, response_status, success, error_detail, delivered_at")
+      .eq("workspace_id", currentWorkspaceId)
+      .order("delivered_at", { ascending: false })
+      .limit(5);
+    if (r.error) throw r.error;
+    return r.data || [];
+  }
+
   /* ---------------- auth actions ---------------- */
   function currentRedirectUrl() {
     return global.location.origin + global.location.pathname;
@@ -796,7 +847,41 @@
       "</div>";
   }
 
-  function renderTeamBody(body, team, myRole, usage) {
+  // A plain incoming-webhook URL an admin pastes in — no OAuth app, no
+  // new credential Aiven itself has to hold. Visible to every member as
+  // a read-only status line; only an admin gets the form to set/change
+  // it. Deliberately no "send test webhook" button in this pass — a
+  // client-side test POST would run into CORS restrictions the pasted
+  // endpoint likely doesn't handle, unlike the server-side Deno fetch
+  // orchestrate/index.ts makes for a real delivery, which has none —
+  // a natural fast-follow, not a silent omission.
+  function renderWebhookSection(webhookConfig, deliveries, amAdmin) {
+    var configured = !!(webhookConfig && webhookConfig.url);
+    var statusHtml = !configured
+      ? "<p class='hint'>Not configured — no run-paused notifications are sent.</p>"
+      : "<p class='hint'>" + (webhookConfig.enabled ? "Active" : "Saved, but disabled") +
+        " — <code>" + webhookConfig.url.replace(/</g, "&lt;") + "</code></p>";
+    var lastDelivery = deliveries && deliveries.length ? deliveries[0] : null;
+    var deliveryHtml = lastDelivery
+      ? "<p class='hint'>Last delivery: " + (lastDelivery.success
+          ? "✅ succeeded"
+          : "⚠️ failed" + (lastDelivery.response_status ? " (HTTP " + lastDelivery.response_status + ")" : "")) +
+        ", " + timeAgo(lastDelivery.delivered_at) + "</p>"
+      : (configured ? "<p class='hint'>No deliveries yet — nothing has paused for approval since this was configured.</p>" : "");
+    var formHtml = amAdmin
+      ? "<div class='team-invite-form'>" +
+        "<input class='control' id='aiven-webhook-url' type='url' placeholder='https://example.com/hooks/aiven' value='" +
+        (configured ? webhookConfig.url.replace(/&/g, "&amp;").replace(/'/g, "&#39;") : "") + "'>" +
+        "<button class='btn small' id='aiven-webhook-save-btn' type='button'>Save</button>" +
+        (configured ? "<button class='btn small ghost' id='aiven-webhook-toggle-btn' type='button'>" + (webhookConfig.enabled ? "Disable" : "Enable") + "</button>" : "") +
+        "</div>"
+      : "";
+    return "<div class='team-section'><h4>Webhook Notifications</h4>" + statusHtml + deliveryHtml + formHtml +
+      "<p class='hint'>Fires a real HTTP POST the moment a run pauses for approval — the one event nobody is otherwise notified of today. No other event types yet.</p>" +
+      "</div>";
+  }
+
+  function renderTeamBody(body, team, myRole, usage, webhookConfig, deliveries) {
     var amAdmin = myRole === "admin";
     var membersHtml = team.members.map(function (m) {
       var mine = currentUser && m.user_id === currentUser.id;
@@ -829,13 +914,14 @@
     body.innerHTML =
       renderEmergencyStopSection(usage, amAdmin) +
       renderPlanSection(usage, amAdmin) +
+      (usage ? renderWebhookSection(webhookConfig, deliveries, amAdmin) : "") +
       "<div class='team-section'><h4>Members</h4>" + membersHtml + "</div>" +
       "<div class='team-section'><h4>Pending invites</h4>" + invitesHtml + "</div>" +
       inviteFormHtml;
 
     async function refresh() {
-      var results = await Promise.all([listTeam(), getUsage()]);
-      renderTeamBody(body, results[0], myRole, results[1]);
+      var results = await Promise.all([listTeam(), getUsage(), getWebhookConfig(), getWebhookDeliveries()]);
+      renderTeamBody(body, results[0], myRole, results[1], results[2], results[3]);
     }
 
     var stopBtn = body.querySelector("#aiven-emergency-stop-btn");
@@ -863,6 +949,38 @@
         catch (e) { toast("Failed to change plan: " + e.message); btn.disabled = false; }
       });
     });
+
+    var webhookSaveBtn = body.querySelector("#aiven-webhook-save-btn");
+    if (webhookSaveBtn) {
+      webhookSaveBtn.addEventListener("click", async function () {
+        var input = body.querySelector("#aiven-webhook-url");
+        var url = input.value.trim();
+        if (!url) { toast("Enter a webhook URL first."); return; }
+        webhookSaveBtn.disabled = true;
+        try {
+          await setWebhookConfig(url, true);
+          toast("Webhook saved — future paused runs will POST here.");
+          await refresh();
+        } catch (e) {
+          toast("Failed to save webhook: " + e.message);
+          webhookSaveBtn.disabled = false;
+        }
+      });
+    }
+    var webhookToggleBtn = body.querySelector("#aiven-webhook-toggle-btn");
+    if (webhookToggleBtn) {
+      webhookToggleBtn.addEventListener("click", async function () {
+        webhookToggleBtn.disabled = true;
+        try {
+          await setWebhookConfig(webhookConfig.url, !webhookConfig.enabled);
+          toast(webhookConfig.enabled ? "Webhook disabled." : "Webhook enabled.");
+          await refresh();
+        } catch (e) {
+          toast("Failed to change webhook: " + e.message);
+          webhookToggleBtn.disabled = false;
+        }
+      });
+    }
 
     body.querySelectorAll("[data-remove-member]").forEach(function (btn) {
       btn.addEventListener("click", async function () {
@@ -929,8 +1047,8 @@
     overlay.querySelector(".aiven-modal-close").addEventListener("click", closeTeamModal);
     var body = overlay.querySelector("#aiven-team-body");
     try {
-      var results = await Promise.all([listTeam(), getUsage()]);
-      renderTeamBody(body, results[0], getRole(), results[1]);
+      var results = await Promise.all([listTeam(), getUsage(), getWebhookConfig(), getWebhookDeliveries()]);
+      renderTeamBody(body, results[0], getRole(), results[1], results[2], results[3]);
     } catch (e) {
       body.innerHTML = "<p class='muted'>Failed to load team: " + e.message + "</p>";
     }
@@ -1099,6 +1217,9 @@
     touchTemplateUsed: touchTemplateUsed,
     setPlan: setPlan,
     setEmergencyStop: setEmergencyStop,
+    getWebhookConfig: getWebhookConfig,
+    setWebhookConfig: setWebhookConfig,
+    getWebhookDeliveries: getWebhookDeliveries,
     timeAgo: timeAgo,
     timeClock: timeClock,
     toast: toast,
