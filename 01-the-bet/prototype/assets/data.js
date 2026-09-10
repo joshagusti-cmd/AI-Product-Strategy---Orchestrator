@@ -24,6 +24,7 @@
   var SUPABASE_ANON_KEY = "sb_publishable_p18dpRJSewtzNn0mLS4GCw_4A3p1qLJ";
   var ORCHESTRATE_FUNCTION_URL = SUPABASE_URL + "/functions/v1/orchestrate";
   var AUDIT_QA_FUNCTION_URL = SUPABASE_URL + "/functions/v1/audit-qa";
+  var AGENT_EVENTS_FUNCTION_URL = SUPABASE_URL + "/functions/v1/agent-events";
   var DEMO_WORKSPACE_ID = "00000000-0000-0000-0000-000000000001";
 
   if (!global.supabase || !global.supabase.createClient) {
@@ -232,6 +233,87 @@
       .eq("workspace_id", currentWorkspaceId).eq("id", id).select();
     if (r.error) throw r.error;
     assertRowsChanged(r.data, "toggle an agent's real pipeline status — only workspace admins can");
+  }
+
+  // Real, random API key generation and hashing, browser-side (Web
+  // Crypto — available in every modern browser over HTTPS, same API
+  // functions/agent-events/index.ts uses server-side to verify it).
+  // Only the hash is ever sent to the server; the raw key exists in
+  // memory just long enough to be shown to the caller once.
+  function generateApiKey() {
+    var bytes = new Uint8Array(24);
+    crypto.getRandomValues(bytes);
+    var hex = Array.prototype.map.call(bytes, function (b) { return b.toString(16).padStart(2, "0"); }).join("");
+    return "aiven_agt_" + hex;
+  }
+  async function sha256Hex(text) {
+    var digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return Array.prototype.map.call(new Uint8Array(digest), function (b) { return b.toString(16).padStart(2, "0"); }).join("");
+  }
+
+  // The universal external-agent connector (migrations/0017, functions/
+  // agent-events/): registers an agent this workspace already runs
+  // somewhere else — any stack, any language — as a real `agents` row
+  // (agent_type: 'external'). Open to any workspace member (RLS:
+  // migrations/0003's "insert member only" — never tightened to admin,
+  // and deliberately left that way here: adding an agent you already
+  // built isn't a governance-sensitive action the way reassigning a
+  // model or editing a policy is). Returns the real, one-time-visible
+  // API key and the real endpoint URL to hand to whoever runs that
+  // agent — neither is recoverable after this call returns; losing the
+  // key means regenerating it (below), not looking it up again.
+  async function registerExternalAgent(fields) {
+    requireOwnWorkspace();
+    var rawKey = generateApiKey();
+    var hash = await sha256Hex(rawKey);
+    var slug = String(fields.name || "agent").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-+|-+$)/g, "").slice(0, 40) || "agent";
+    var id = "ext-" + slug + "-" + Math.random().toString(36).slice(2, 7);
+    var r = await sb.from("agents").insert({
+      workspace_id: currentWorkspaceId,
+      id: id,
+      name: fields.name,
+      dept: fields.dept || "External",
+      tier: "Core",
+      model: "External",
+      status: "Active",
+      can: fields.note || "Reports its own real activity via the external-agent connector.",
+      cannot: "Cannot be run or paused by Aiven directly — only what it reports here is real.",
+      approval: "Gated only if this agent's own code checks in before acting",
+      reviewed: new Date().toISOString().slice(0, 10),
+      agent_type: "external",
+      external_key_hash: hash
+    }).select();
+    if (r.error) throw r.error;
+    return { agent: r.data[0], apiKey: rawKey, endpointUrl: AGENT_EVENTS_FUNCTION_URL };
+  }
+
+  // Admin only (RLS: migrations/0008's "update admin only" — same
+  // policy that already covers every other agents.* UPDATE). Issues a
+  // brand-new real key, replacing the old one immediately: since only
+  // the hash was ever stored, there is nothing to "reveal" for a lost
+  // key, only a fresh one to issue.
+  async function regenerateExternalAgentKey(id) {
+    requireOwnWorkspace();
+    var rawKey = generateApiKey();
+    var hash = await sha256Hex(rawKey);
+    var r = await sb.from("agents").update({ external_key_hash: hash, updated_at: new Date().toISOString() })
+      .eq("workspace_id", currentWorkspaceId).eq("id", id).eq("agent_type", "external").select();
+    if (r.error) throw r.error;
+    assertRowsChanged(r.data, "regenerate an external agent's key — only workspace admins can");
+    return { apiKey: rawKey, endpointUrl: AGENT_EVENTS_FUNCTION_URL };
+  }
+
+  // Open to any workspace member (RLS: migrations/0003's "delete member
+  // only", same reasoning as registerExternalAgent above). Scoped to
+  // agent_type = 'external' here as a client-side safety rail — this
+  // isn't the control for removing one of the real pipeline agents
+  // (use the Enabled toggle for that instead).
+  async function deleteExternalAgent(id) {
+    requireOwnWorkspace();
+    var r = await sb.from("agents").delete()
+      .eq("workspace_id", currentWorkspaceId).eq("id", id).eq("agent_type", "external").select();
+    if (r.error) throw r.error;
+    assertRowsChanged(r.data, "remove an external agent");
   }
 
   // Admin or Compliance Owner only (RLS: migrations/0008).
@@ -905,6 +987,9 @@
     getApprovalQueue: getApprovalQueue,
     updateAgentModel: updateAgentModel,
     setAgentEnabled: setAgentEnabled,
+    registerExternalAgent: registerExternalAgent,
+    regenerateExternalAgentKey: regenerateExternalAgentKey,
+    deleteExternalAgent: deleteExternalAgent,
     savePolicy: savePolicy,
     decideApproval: decideApproval,
     decideShadowTool: decideShadowTool,

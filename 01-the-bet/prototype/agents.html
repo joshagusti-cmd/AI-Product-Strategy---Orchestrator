@@ -20,6 +20,15 @@
   .pipeline-tag.gate { color: var(--critical); border-color: var(--critical); }
   .pipeline-toggle-label { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-mute); margin-top: 4px; cursor: pointer; }
   .pipeline-toggle-label input { accent-color: var(--accent); }
+  .type-badge { font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 7px; border: 1px solid; white-space: nowrap; display: inline-block; }
+  .type-badge.internal { color: var(--running); border-color: var(--running); }
+  .type-badge.external { color: var(--accent); border-color: var(--accent-dim); }
+  .last-seen { font-size: 11px; color: var(--text-mute); margin-top: 4px; }
+  .external-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .key-box {
+    font-family: var(--mono); font-size: 12.5px; background: var(--surface-sunken); border: 1px solid var(--border);
+    padding: 10px 12px; word-break: break-all; user-select: all; color: var(--text);
+  }
   @media (max-width: 980px) { .kpi-strip { grid-template-columns: repeat(2, 1fr); } }
 </style>
 </head>
@@ -58,7 +67,7 @@
 <div class="shell">
   <div class="page-head">
     <h1>&gt; Agent Registry</h1>
-    <p>Every agent the orchestrator governs, across every connected department — what it's allowed to do, what it can never do on its own, and who has to sign off before it acts. Reassigning a model here re-evaluates governance the same way it does from the Command Center. The <b>Pipeline</b> column is real, too: the real Command Center run reads this registry directly — toggling an agent off genuinely removes it from the very next run, without deleting it.</p>
+    <p>Every agent the orchestrator governs, across every connected department — what it's allowed to do, what it can never do on its own, and who has to sign off before it acts. Reassigning a model here re-evaluates governance the same way it does from the Command Center. The <b>Pipeline</b> column is real, too: the real Command Center run reads this registry directly — toggling an agent off genuinely removes it from the very next run, without deleting it. Running an agent somewhere else entirely? <b>Add external agent</b> below connects it for real — it reports its own real activity into this same registry, the Audit Trail, and the Approval Queue.</p>
   </div>
 
   <section class="kpi-strip" aria-label="Registry metrics">
@@ -76,11 +85,12 @@
   <div class="panel">
     <div class="panel-head">
       <div><h2>Registered agents</h2><div class="hint">Tier follows the Leader / Filler / Killer model-cascade from the pricing model, plus Core for general orchestration agents.</div></div>
+      <button class="btn small primary" id="add-external-btn" type="button">+ Add external agent</button>
     </div>
     <div class="panel-body tight scroll-x">
       <table class="data" id="agent-table">
         <thead><tr>
-          <th>Agent</th><th>Department</th><th>Tier</th><th>Pipeline</th><th>Model</th><th>Status</th><th>Approval needed</th><th>Last reviewed</th>
+          <th>Agent</th><th>Type</th><th>Department</th><th>Tier</th><th>Pipeline</th><th>Model</th><th>Status</th><th>Approval needed</th><th>Last reviewed</th>
         </tr></thead>
         <tbody id="agent-rows"></tbody>
       </table>
@@ -154,33 +164,58 @@
     });
     var body = document.getElementById("agent-rows");
     if (!rows.length) {
-      body.innerHTML = "<tr><td colspan='8'><div class='empty-state'>No agents match this filter.</div></td></tr>";
+      body.innerHTML = "<tr><td colspan='9'><div class='empty-state'>No agents match this filter.</div></td></tr>";
       return;
     }
     var isAdmin = Aiven.auth.isAdmin();
     body.innerHTML = rows.map(function (a) {
+      var isExternal = a.agent_type === "external";
+      var typeCell = isExternal
+        ? "<span class='type-badge external'>External</span>"
+        : "<span class='type-badge internal'>Internal · Claude</span>";
+
       // Real pipeline status, straight off the registry row (migrations/
       // 0016) — sequence_order is only set for agents the real
-      // Orchestrate Edge Function actually runs, in that order.
-      var isStructural = a.is_writer || a.is_risk_gate;
-      var toggleDisabledAttr = isStructural
-        ? " disabled title='The pipeline needs exactly one Writer and one Risk gate — this role can\\'t be disabled here'"
-        : (isAdmin ? "" : " disabled title='Only workspace admins can toggle this'");
-      var pipelineCell = a.sequence_order != null
-        ? "<span class='mono' style='font-size:11px;'>Step " + a.sequence_order + "</span>" +
+      // Orchestrate Edge Function actually runs, in that order. An
+      // external agent is never part of this pipeline — Aiven doesn't
+      // run it — so its cell shows real last-seen activity instead
+      // (migrations/0017, updated by functions/agent-events/ every time
+      // it reports in).
+      var pipelineCell;
+      if (isExternal) {
+        pipelineCell = "<div class='last-seen'>" + (a.external_last_seen_at ? "Last seen " + Aiven.timeAgo(a.external_last_seen_at) : "Never connected yet") + "</div>";
+      } else if (a.sequence_order != null) {
+        var isStructural = a.is_writer || a.is_risk_gate;
+        var toggleDisabledAttr = isStructural
+          ? " disabled title='The pipeline needs exactly one Writer and one Risk gate — this role can\\'t be disabled here'"
+          : (isAdmin ? "" : " disabled title='Only workspace admins can toggle this'");
+        pipelineCell = "<span class='mono' style='font-size:11px;'>Step " + a.sequence_order + "</span>" +
           (a.is_writer ? "<span class='pipeline-tag writer'>Writer</span>" : "") +
           (a.is_risk_gate ? "<span class='pipeline-tag gate'>Risk gate</span>" : "") +
           "<label class='pipeline-toggle-label'><input type='checkbox' class='pipeline-toggle' data-id='" + a.id + "'" +
-          (a.enabled ? " checked" : "") + toggleDisabledAttr + "> Enabled</label>"
-        : "<span class='muted' style='font-size:11px;'>Not in pipeline</span>";
+          (a.enabled ? " checked" : "") + toggleDisabledAttr + "> Enabled</label>";
+      } else {
+        pipelineCell = "<span class='muted' style='font-size:11px;'>Not in pipeline</span>";
+      }
+
+      // Aiven never runs an external agent, so there's no real model to
+      // route — the cell becomes its real connection controls instead.
+      var modelCell = isExternal
+        ? "<div class='external-actions'>" +
+          "<button class='btn small ghost regen-key-btn' data-id='" + a.id + "'" + (isAdmin ? "" : " disabled title='Only workspace admins can regenerate this'") + ">Regenerate key</button>" +
+          "<button class='btn small ghost remove-external-btn' data-id='" + a.id + "'>Remove</button>" +
+          "</div>"
+        : "<select class='control model-col model-select' data-id='" + a.id + "'" + (isAdmin ? "" : " disabled title='Only workspace admins can reassign a model'") + ">" +
+          MODELS.map(function (m) { return "<option" + (m === a.model ? " selected" : "") + ">" + m + "</option>"; }).join("") +
+          "</select>";
+
       return "<tr data-id='" + a.id + "'>" +
         "<td class='name'>" + a.name + "<div class='cap-line can'>" + a.can + "</div><div class='cap-line cannot'>" + a.cannot + "</div></td>" +
+        "<td>" + typeCell + "</td>" +
         "<td>" + a.dept + "</td>" +
         "<td><span class='tier-pill " + a.tier + "'>" + a.tier + "</span></td>" +
         "<td>" + pipelineCell + "</td>" +
-        "<td><select class='control model-col model-select' data-id='" + a.id + "'" + (isAdmin ? "" : " disabled title='Only workspace admins can reassign a model'") + ">" +
-        MODELS.map(function (m) { return "<option" + (m === a.model ? " selected" : "") + ">" + m + "</option>"; }).join("") +
-        "</select></td>" +
+        "<td>" + modelCell + "</td>" +
         "<td><span class='status-pill " + a.status + "'><span class='dot'></span>" + a.status + "</span></td>" +
         "<td>" + a.approval + "</td>" +
         "<td class='mono'>" + a.reviewed + "</td>" +
@@ -228,7 +263,128 @@
         }
       });
     });
+
+    Array.prototype.forEach.call(body.querySelectorAll(".regen-key-btn"), function (btn) {
+      btn.addEventListener("click", async function () {
+        var agent = state.agents.find(function (a) { return a.id === btn.dataset.id; });
+        if (!confirm("Regenerate " + agent.name + "'s API key? Its current key stops working the moment you do.")) return;
+        btn.disabled = true;
+        try {
+          var result = await Aiven.regenerateExternalAgentKey(agent.id);
+          await Aiven.addAudit({ actor: "Orchestrator Core", model: "—", risk: "—",
+            action: "Regenerated API key for external agent " + agent.name,
+            detail: "The previous key stopped working immediately." });
+          showKeyModal(agent, result);
+        } catch (e) {
+          Aiven.toast("Couldn't regenerate the key: " + e.message);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+
+    Array.prototype.forEach.call(body.querySelectorAll(".remove-external-btn"), function (btn) {
+      btn.addEventListener("click", async function () {
+        var agent = state.agents.find(function (a) { return a.id === btn.dataset.id; });
+        if (!confirm("Remove " + agent.name + "? Its API key stops working immediately — nothing it reports after this will be recorded.")) return;
+        btn.disabled = true;
+        try {
+          await Aiven.deleteExternalAgent(agent.id);
+          state.agents = state.agents.filter(function (a) { return a.id !== agent.id; });
+          await Aiven.addAudit({ actor: "Orchestrator Core", model: "—", risk: "—",
+            action: "Removed external agent " + agent.name,
+            detail: "Its API key was revoked immediately." });
+          Aiven.toast(agent.name + " removed");
+          renderFilters();
+          renderKpis();
+          renderTable();
+        } catch (e) {
+          Aiven.toast("Couldn't remove " + agent.name + ": " + e.message);
+          btn.disabled = false;
+        }
+      });
+    });
   }
+
+  /* ---------------- external-agent connector modals ---------------- */
+  function closeModal() {
+    var el = document.getElementById("aiven-agent-modal-overlay");
+    if (el) el.remove();
+  }
+
+  // Shows the real, one-time API key + endpoint URL for an external
+  // agent — right after registering it, or after regenerating its key.
+  // Neither value can be retrieved again after this closes (only the
+  // key's hash is ever stored), so the copy affordance and warning
+  // matter more here than in any other modal in this app.
+  function showKeyModal(agent, result) {
+    closeModal();
+    var overlay = document.createElement("div");
+    overlay.className = "aiven-modal-overlay";
+    overlay.id = "aiven-agent-modal-overlay";
+    overlay.innerHTML =
+      "<div class='aiven-modal'>" +
+      "<div class='aiven-modal-head'><h3>" + agent.name + " is connected</h3>" +
+      "<button class='aiven-modal-close' type='button' aria-label='Close'>&times;</button></div>" +
+      "<div class='aiven-modal-body'>" +
+      "<p class='hint'>Save this key now — it won't be shown again. Give both values to whoever runs this agent's own code; regenerate the key from this page any time (that immediately invalidates the old one).</p>" +
+      "<div class='field'><span class='field-label'>API key</span><div class='key-box' id='key-box-value'>" + result.apiKey + "</div></div>" +
+      "<div class='field'><span class='field-label'>Endpoint URL</span><div class='key-box'>" + result.endpointUrl + "</div></div>" +
+      "<p class='hint'>Their code POSTs to that URL with this key and a short message every time it does something — that's what shows up in this registry, the Audit Trail, and (if it reports a risk flag and asks) the Approval Queue.</p>" +
+      "<button class='btn primary' id='agent-modal-done-btn' type='button' style='margin-top:6px;'>Done</button>" +
+      "</div></div>";
+    document.body.appendChild(overlay);
+    overlay.addEventListener("click", function (e) { if (e.target === overlay) closeModal(); });
+    overlay.querySelector(".aiven-modal-close").addEventListener("click", closeModal);
+    overlay.querySelector("#agent-modal-done-btn").addEventListener("click", closeModal);
+  }
+
+  function openAddExternalModal() {
+    closeModal();
+    var overlay = document.createElement("div");
+    overlay.className = "aiven-modal-overlay";
+    overlay.id = "aiven-agent-modal-overlay";
+    overlay.innerHTML =
+      "<div class='aiven-modal'>" +
+      "<div class='aiven-modal-head'><h3>Add an external agent</h3>" +
+      "<button class='aiven-modal-close' type='button' aria-label='Close'>&times;</button></div>" +
+      "<div class='aiven-modal-body'>" +
+      "<p class='hint'>For an agent your team already runs somewhere else — any stack, any language. Aiven won't execute it; it reports its own real activity in, using a real API key you'll get after saving.</p>" +
+      "<div class='field'><span class='field-label'>Name</span><input class='control' id='ext-name-input' type='text' placeholder='e.g. Internal Fraud Scoring Bot'></div>" +
+      "<div class='field'><span class='field-label'>Department</span><input class='control' id='ext-dept-input' type='text' placeholder='e.g. Fraud Ops'></div>" +
+      "<div class='field'><span class='field-label'>What does it do?</span><textarea class='control' id='ext-note-input' rows='3' placeholder='One or two sentences — shown in the registry the same way as any other agent.'></textarea></div>" +
+      "<button class='btn primary' id='ext-save-btn' type='button'>Save &amp; get API key</button>" +
+      "</div></div>";
+    document.body.appendChild(overlay);
+    overlay.addEventListener("click", function (e) { if (e.target === overlay) closeModal(); });
+    overlay.querySelector(".aiven-modal-close").addEventListener("click", closeModal);
+    overlay.querySelector("#ext-save-btn").addEventListener("click", async function () {
+      var btn = overlay.querySelector("#ext-save-btn");
+      var name = overlay.querySelector("#ext-name-input").value.trim();
+      var dept = overlay.querySelector("#ext-dept-input").value.trim();
+      var note = overlay.querySelector("#ext-note-input").value.trim();
+      if (!name) { Aiven.toast("Give the agent a name first."); return; }
+      btn.disabled = true;
+      try {
+        var result = await Aiven.registerExternalAgent({ name: name, dept: dept, note: note });
+        state.agents.push(result.agent);
+        await Aiven.addAudit({ actor: "Orchestrator Core", model: "—", risk: "—",
+          action: "Registered external agent " + name,
+          detail: "A real API key and endpoint were issued for it to report its own activity." });
+        Aiven.toast(name + " added — save its API key now");
+        renderFilters();
+        renderKpis();
+        renderTable();
+        showKeyModal(result.agent, result);
+      } catch (e) {
+        Aiven.toast("Couldn't add " + name + ": " + e.message);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
+
+  document.getElementById("add-external-btn").addEventListener("click", openAddExternalModal);
 
   document.getElementById("kpi-depts-tile").addEventListener("click", function () {
     document.getElementById("dept-filter").scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "center" });
