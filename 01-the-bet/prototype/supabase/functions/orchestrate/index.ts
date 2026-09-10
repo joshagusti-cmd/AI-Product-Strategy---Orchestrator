@@ -76,6 +76,12 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // before any of the above — one admin-flipped switch (the Workspace
 // modal) that freezes both a fresh run and a resume until it's lifted.
 // See checkEmergencyStop below.
+//
+// Real PII/secrets redaction runs on both sides of every real Anthropic
+// call: the objective before it's ever prompted to an agent (input),
+// and every agent's title/detail/summary/findings/recommendations/
+// riskFlags text before it's stored or returned (output). See
+// redactSensitive/mergeRedactions below and their call sites.
 
 // Objective text and scope size are the only signals available before
 // any agent has run — this is a real, cheap, explainable heuristic, not
@@ -137,6 +143,79 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+
+// Real, real-time PII/secrets redaction — a deterministic pattern-match
+// pass, not a claim of true PII detection, same honesty as the auto-route
+// heuristic above. Runs on the objective before it ever reaches an agent
+// (input) and on every agent's title/detail/summary/findings/
+// recommendations/riskFlags text before they're stored or returned
+// (output) — see redactSensitive/mergeRedactions below and their call
+// sites in the main handler, handleResume, and runOneAgent. Matches are
+// masked in place (never dropped silently) and every masked value is
+// counted by type, merged into ctx.redactions, returned to the frontend
+// (mirroring how `substitutions` already surfaces a silent model swap),
+// and logged as a real audit_log entry (see logRedactions below) — a
+// real, auditable finding, not a silent block.
+type Redaction = { type: string; count: number };
+
+// Order matters: SSN and the API-key prefixes are checked before the
+// looser credit-card/email/phone patterns, so an already-redacted
+// `[REDACTED:X]` marker (or part of one) can never itself be re-matched
+// or partially eaten by a later, broader pattern.
+const REDACTION_PATTERNS: Array<{ type: string; re: RegExp; validate?: (raw: string) => boolean }> = [
+  { type: "SSN", re: /\b\d{3}-\d{2}-\d{4}\b/g },
+  {
+    type: "API_KEY",
+    re: /\b(?:sk-ant-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|gh[opsu]_[A-Za-z0-9]{30,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,})\b/g,
+  },
+  // Luhn-validated so a plain 13-19 digit run (an order number, a phone
+  // number with no separators) isn't flagged as a card number just for
+  // being the right length.
+  { type: "CREDIT_CARD", re: /\b(?:\d[ -]?){13,19}\b/g, validate: (raw) => luhnValid(raw.replace(/[ -]/g, "")) },
+  { type: "EMAIL", re: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g },
+  { type: "PHONE", re: /\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g },
+];
+
+function luhnValid(digits: string): boolean {
+  if (!/^\d{13,19}$/.test(digits)) return false;
+  let sum = 0;
+  let alt = false;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let n = parseInt(digits[i], 10);
+    if (alt) {
+      n *= 2;
+      if (n > 9) n -= 9;
+    }
+    sum += n;
+    alt = !alt;
+  }
+  return sum % 10 === 0;
+}
+
+function redactSensitive(text: string): { text: string; redactions: Redaction[] } {
+  if (!text) return { text: text || "", redactions: [] };
+  const counts: Record<string, number> = {};
+  let out = text;
+  for (const { type, re, validate } of REDACTION_PATTERNS) {
+    out = out.replace(re, (m) => {
+      if (validate && !validate(m)) return m;
+      counts[type] = (counts[type] || 0) + 1;
+      return `[REDACTED:${type}]`;
+    });
+  }
+  return { text: out, redactions: Object.keys(counts).map((type) => ({ type, count: counts[type] })) };
+}
+
+// Merges a fresh batch of redaction counts (e.g. from one agent's step)
+// into the run's running total, in place — mirrors ctx.substitutions'
+// own accumulate-as-you-go pattern.
+function mergeRedactions(ctx: { redactions: Redaction[] }, found: Redaction[]) {
+  for (const r of found) {
+    const existing = ctx.redactions.find((x) => x.type === r.type);
+    if (existing) existing.count += r.count;
+    else ctx.redactions.push({ type: r.type, count: r.count });
+  }
+}
 
 // Real Claude model each dropdown/registry label maps to. The dropdown
 // also offers "GPT-4o" and "Gemini 1.5 Pro" (illustrative multi-provider
@@ -487,6 +566,30 @@ async function logCall(
   }
 }
 
+// Writes one real audit_log entry when redaction actually fired during
+// this run — called once per real completion point (a pause or a final
+// result), same cadence as recordUsage/recordRun above, so it's a real,
+// queryable finding rather than only living in the response's toast.
+async function logRedactions(workspaceId: string, redactions: Redaction[]) {
+  if (!redactions.length) return;
+  const summary = redactions.map((r) => `${r.count} ${r.type}`).join(", ");
+  try {
+    await serviceRoleFetch("audit_log", {
+      method: "POST",
+      body: JSON.stringify({
+        workspace_id: workspaceId,
+        actor: "Aiven Orchestrator",
+        action: "Redacted sensitive values before/after real agent calls",
+        risk: "Medium",
+        detail: `Masked ${summary} in this run's objective and/or agent output before it was sent to Claude or stored.`,
+      }),
+    });
+  } catch (err) {
+    // Telemetry must never break a real orchestration run.
+    console.error("orchestrate: failed to log redactions", err);
+  }
+}
+
 // Reads the workspace's Core-tier policy (id: 'compliance' — the tier
 // every real pipeline agent belongs to; see migrations/0011). Returns
 // null if it's missing (e.g. hand-edited out of the demo data) so the
@@ -612,6 +715,7 @@ type RunCtx = {
   totalOutputTokens: number;
   modelsUsed: Set<string>;
   substitutions: Array<{ agentId: string; agentName: string; requested: string; used: string }>;
+  redactions: Redaction[];
 };
 
 type AgentOutcome =
@@ -673,10 +777,31 @@ async function runOneAgent(agent: PipelineAgent, ctx: RunCtx): Promise<AgentOutc
     if (!out.title || !out.detail || !Array.isArray(out.findings) || !Array.isArray(out.recommendations) || !Array.isArray(out.riskFlags)) {
       throw new Error("Executive Writer Agent: returned an incomplete result.");
     }
-    ctx.steps.push({ agentId: agent.id, agentName: agent.name, title: out.title, detail: out.detail });
+    // Output redaction — the writer's synthesized deliverable is what a
+    // human actually reads and what gets archived/exported, so every
+    // text field it can carry PII/secrets in gets the same real pass the
+    // objective (input) already went through.
+    const title = redactSensitive(out.title);
+    const detail = redactSensitive(out.detail);
+    const executiveSummary = redactSensitive(out.executiveSummary || "");
+    const findings = (out.findings as string[]).map((f) => redactSensitive(f));
+    const recommendations = (out.recommendations as Array<{ text: string; owner: string; nextStep: string; priority: string }>).map((r) => ({
+      ...r,
+      text: redactSensitive(r.text).text,
+      nextStep: redactSensitive(r.nextStep).text,
+    }));
+    const riskFlags = (out.riskFlags as string[]).map((f) => redactSensitive(f));
+    mergeRedactions(ctx, [
+      ...title.redactions, ...detail.redactions, ...executiveSummary.redactions,
+      ...findings.flatMap((f) => f.redactions), ...riskFlags.flatMap((f) => f.redactions),
+    ]);
+    ctx.steps.push({ agentId: agent.id, agentName: agent.name, title: title.text, detail: detail.text });
     return {
       kind: "final",
-      result: { executiveSummary: out.executiveSummary, steps: ctx.steps, findings: out.findings, recommendations: out.recommendations, riskFlags: out.riskFlags },
+      result: {
+        executiveSummary: executiveSummary.text, steps: ctx.steps,
+        findings: findings.map((f) => f.text), recommendations, riskFlags: riskFlags.map((f) => f.text),
+      },
     };
   }
 
@@ -684,25 +809,30 @@ async function runOneAgent(agent: PipelineAgent, ctx: RunCtx): Promise<AgentOutc
   if (!out.title || !out.detail) {
     throw new Error(`${agent.name}: returned an incomplete result.`);
   }
+  const title = redactSensitive(out.title);
+  const detail = redactSensitive(out.detail);
+  const riskFlagText = out.riskFlag && out.riskFlag.text ? redactSensitive(out.riskFlag.text) : null;
+  mergeRedactions(ctx, [...title.redactions, ...detail.redactions, ...(riskFlagText ? riskFlagText.redactions : [])]);
+  const riskFlag = out.riskFlag && riskFlagText ? { ...out.riskFlag, text: riskFlagText.text } : out.riskFlag;
   ctx.steps.push({
     agentId: agent.id,
     agentName: agent.name,
-    title: out.title,
-    detail: out.detail,
-    ...(out.riskFlag && out.riskFlag.text ? { riskFlag: out.riskFlag } : {}),
+    title: title.text,
+    detail: detail.text,
+    ...(riskFlag && riskFlag.text ? { riskFlag } : {}),
   });
 
-  if (agent.isRiskGate && out.riskFlag && out.riskFlag.text) {
+  if (agent.isRiskGate && riskFlag && riskFlag.text) {
     const policy = await getCompliancePolicy(ctx.workspaceId);
-    if (shouldPauseForPolicy(policy, out.riskFlag)) {
+    if (shouldPauseForPolicy(policy, riskFlag)) {
       const runState = {
         objective: ctx.objective, departments: ctx.departments, sources: ctx.sources,
         agentModels: ctx.agentModels, autoRoute: ctx.autoRoute,
         steps: ctx.steps, totalInputTokens: ctx.totalInputTokens, totalOutputTokens: ctx.totalOutputTokens,
-        modelsUsed: Array.from(ctx.modelsUsed), substitutions: ctx.substitutions,
+        modelsUsed: Array.from(ctx.modelsUsed), substitutions: ctx.substitutions, redactions: ctx.redactions,
       };
-      const approvalId = await createPendingApproval(ctx.workspaceId, out.riskFlag, runState);
-      return { kind: "paused", approvalId, riskFlag: out.riskFlag, policy: policy! };
+      const approvalId = await createPendingApproval(ctx.workspaceId, riskFlag, runState);
+      return { kind: "paused", approvalId, riskFlag, policy: policy! };
     }
   }
 
@@ -767,7 +897,21 @@ async function handleResume(workspaceId: string, userId: string, approvalId: str
     totalOutputTokens: Number(rs.totalOutputTokens) || 0,
     modelsUsed: new Set<string>(Array.isArray(rs.modelsUsed) ? rs.modelsUsed : []),
     substitutions: Array.isArray(rs.substitutions) ? rs.substitutions.slice() : [],
+    // The objective was already redacted once, before it was ever stored
+    // in run_state at pause time — carrying forward what was already
+    // found, not re-scanning already-redacted `[REDACTED:X]` text.
+    redactions: Array.isArray(rs.redactions) ? rs.redactions.slice() : [],
   };
+  // Snapshot so logRedactions below logs only what THIS resume newly
+  // found, not the pre-pause counts again — those were already logged
+  // once, in the main handler's own "paused" branch.
+  const preResumeCounts: Record<string, number> = {};
+  for (const r of ctx.redactions) preResumeCounts[r.type] = r.count;
+  function newRedactionsSinceResume(): Redaction[] {
+    return ctx.redactions
+      .map((r) => ({ type: r.type, count: r.count - (preResumeCounts[r.type] || 0) }))
+      .filter((r) => r.count > 0);
+  }
 
   try {
     for (const agent of remaining) {
@@ -783,6 +927,7 @@ async function handleResume(workspaceId: string, userId: string, approvalId: str
         // call, so it must not count against the daily cap twice.
         const finalModel = Array.from(ctx.modelsUsed).join(" · ");
         await recordRun(ctx, outcome.result, finalModel, true, approvalId);
+        await logRedactions(workspaceId, newRedactionsSinceResume());
         return json({
           result: outcome.result,
           model: finalModel,
@@ -790,6 +935,7 @@ async function handleResume(workspaceId: string, userId: string, approvalId: str
           substitutions: ctx.substitutions,
           routing: routingInfo(ctx),
           resumedApprovalId: approvalId,
+          redactions: ctx.redactions,
         });
       }
       // A real pipeline could in principle have a second risk-gate-like
@@ -797,7 +943,8 @@ async function handleResume(workspaceId: string, userId: string, approvalId: str
       // earlier) — handled anyway so a second real gate would still
       // work, not get lost.
       if (outcome.kind === "paused") {
-        return json({ paused: true, approvalId: outcome.approvalId, steps: ctx.steps, riskFlag: outcome.riskFlag, routing: routingInfo(ctx) });
+        await logRedactions(workspaceId, newRedactionsSinceResume());
+        return json({ paused: true, approvalId: outcome.approvalId, steps: ctx.steps, riskFlag: outcome.riskFlag, routing: routingInfo(ctx), redactions: ctx.redactions });
       }
     }
     return json({ error: "Resumed orchestration ended without a final result." }, 502);
@@ -864,14 +1011,23 @@ Deno.serve(async (req: Request) => {
     return json({ error: pipeline.error }, 500);
   }
 
-  const objective = body.objective;
+  const rawObjective = body.objective;
   const departments = Array.isArray(body.departments) ? body.departments as string[] : [];
   const sources = Array.isArray(body.sources) ? body.sources as string[] : [];
   const agentModels = body.agentModels && typeof body.agentModels === "object" ? body.agentModels as Record<string, unknown> : {};
   const autoRoute = body.autoRoute === true;
-  if (!objective || typeof objective !== "string") {
+  if (!rawObjective || typeof rawObjective !== "string") {
     return json({ error: "`objective` (string) is required." }, 400);
   }
+
+  // Input redaction — the objective is the one piece of this request a
+  // caller actually typed by hand, so it's the one real input surface
+  // for PII/secrets to land on. Redacted once, here, before it's ever
+  // used to route, prompt an agent, or get archived — everything
+  // downstream (routing, briefing, orchestrate_runs.objective) only
+  // ever sees the redacted version.
+  const objectiveRedaction = redactSensitive(rawObjective);
+  const objective = objectiveRedaction.text;
 
   const briefing = `Business objective: ${objective}\nDepartments in scope: ${departments.join(", ") || "none specified"}\nData sources in scope: ${sources.join(", ") || "none specified"}`;
 
@@ -884,6 +1040,7 @@ Deno.serve(async (req: Request) => {
     totalOutputTokens: 0,
     modelsUsed: new Set<string>(),
     substitutions: [],
+    redactions: objectiveRedaction.redactions.slice(),
   };
 
   try {
@@ -896,6 +1053,7 @@ Deno.serve(async (req: Request) => {
         // (handleResume no longer records usage itself, so a run is
         // counted exactly once regardless of whether it ever resumes).
         await recordUsage(workspaceId, userId);
+        await logRedactions(workspaceId, ctx.redactions);
         return json({
           paused: true,
           approvalId: outcome.approvalId,
@@ -903,18 +1061,21 @@ Deno.serve(async (req: Request) => {
           riskFlag: outcome.riskFlag,
           policy: { autonomy: outcome.policy.autonomy, riskThreshold: outcome.policy.risk_threshold },
           routing: routingInfo(ctx),
+          redactions: ctx.redactions,
         });
       }
       if (outcome.kind === "final") {
         await recordUsage(workspaceId, userId);
         const finalModel = Array.from(ctx.modelsUsed).join(" · ");
         await recordRun(ctx, outcome.result, finalModel, false, null);
+        await logRedactions(workspaceId, ctx.redactions);
         return json({
           result: outcome.result,
           model: finalModel,
           usage: { input_tokens: ctx.totalInputTokens, output_tokens: ctx.totalOutputTokens },
           substitutions: ctx.substitutions,
           routing: routingInfo(ctx),
+          redactions: ctx.redactions,
         });
       }
       // "continue" — fall through to the next agent
