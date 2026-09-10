@@ -492,26 +492,54 @@
     return body; // { result, model, usage, substitutions, routing, resumedApprovalId }
   }
 
+  // Real Anthropic per-model pricing, $ / million tokens (input, output)
+  // — duplicated from spend.html's own copy (and orchestrate/index.ts's
+  // server-side copy that actually enforces the cap) so this real-time
+  // display never needs an extra Edge Function round trip. Keep all
+  // three in sync if pricing changes.
+  var REAL_PRICING = {
+    "claude-sonnet-5": { in: 2.00, out: 10.00 },
+    "claude-opus-4-8": { in: 5.00, out: 25.00 },
+    "claude-haiku-4-5": { in: 1.00, out: 5.00 }
+  };
+  function realCallCost(model, inputTokens, outputTokens) {
+    var p = REAL_PRICING[model] || { in: 0, out: 0 };
+    return (inputTokens / 1e6) * p.in + (outputTokens / 1e6) * p.out;
+  }
+
   // Reads the caller's own workspace's rolling-24h Orchestrate usage
   // against its cap, straight from the DB (RLS lets a member read their
   // own workspace row and usage log) — no Edge Function round trip.
   // Returns null for the read-only demo workspace, where Orchestrate
-  // isn't available at all.
+  // isn't available at all. Also computes the real rolling-24h dollar
+  // spend against the workspace's real daily_spend_cap_usd
+  // (migrations/0019) — the same second, real cap
+  // orchestrate/index.ts's checkSpendCap enforces server-side; this is
+  // purely a display of the identical real telemetry, not a second
+  // source of truth for whether a run is actually allowed.
   async function getUsage() {
     await ready;
     if (currentWorkspaceId === DEMO_WORKSPACE_ID) return null;
     var wsRes = await sb.from("workspaces")
-      .select("daily_orchestrate_limit, plan, emergency_stop, emergency_stop_at, emergency_stop_by_email")
+      .select("daily_orchestrate_limit, plan, emergency_stop, emergency_stop_at, emergency_stop_by_email, daily_spend_cap_usd")
       .eq("id", currentWorkspaceId).maybeSingle();
     if (wsRes.error) throw wsRes.error;
     var limit = (wsRes.data && wsRes.data.daily_orchestrate_limit) || 20;
     var plan = (wsRes.data && wsRes.data.plan) || "free";
+    var spendCapUsd = (wsRes.data && Number(wsRes.data.daily_spend_cap_usd)) || 5;
     var since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     var countRes = await sb.from("orchestrate_usage").select("id", { count: "exact", head: true })
       .eq("workspace_id", currentWorkspaceId).gte("called_at", since);
     if (countRes.error) throw countRes.error;
+    var callsRes = await sb.from("orchestrate_call_log").select("model, input_tokens, output_tokens")
+      .eq("workspace_id", currentWorkspaceId).gte("called_at", since);
+    if (callsRes.error) throw callsRes.error;
+    var spendUsedUsd = (callsRes.data || []).reduce(function (sum, c) {
+      return sum + realCallCost(c.model, c.input_tokens || 0, c.output_tokens || 0);
+    }, 0);
     return {
       used: countRes.count || 0, limit: limit, plan: plan,
+      spendUsedUsd: spendUsedUsd, spendCapUsd: spendCapUsd,
       emergencyStop: !!(wsRes.data && wsRes.data.emergency_stop),
       emergencyStopAt: (wsRes.data && wsRes.data.emergency_stop_at) || null,
       emergencyStopByEmail: (wsRes.data && wsRes.data.emergency_stop_by_email) || null
@@ -757,11 +785,14 @@
           return "<button class='btn small ghost' data-set-plan='" + key + "' type='button'>" + verb + PLAN_INFO[key].label + "</button>";
         }).join("")
       : "";
+    var spendPct = usage.spendCapUsd > 0 ? Math.min(100, Math.round((usage.spendUsedUsd / usage.spendCapUsd) * 100)) : 0;
     return "<div class='team-section'><h4>Plan</h4>" +
       "<div class='plan-row'><span class='plan-badge'>" + info.label + "</span>" +
       "<span class='plan-usage'>" + usage.used + " / " + usage.limit + " Orchestrate runs used today</span></div>" +
+      "<div class='plan-row'><span class='plan-usage'>$" + usage.spendUsedUsd.toFixed(2) + " / $" + usage.spendCapUsd.toFixed(2) +
+      " spent today (real, " + spendPct + "%)</span></div>" +
       (buttons ? "<div class='plan-actions'>" + buttons + "</div>" : "") +
-      "<p class='hint'>No real billing here — changing plan immediately changes the real, enforced daily cap; nothing is actually charged.</p>" +
+      "<p class='hint'>No real billing here — changing plan immediately changes the real, enforced daily run and dollar caps; nothing is actually charged. The dollar figure is real, measured spend at real Anthropic rates, not modeled.</p>" +
       "</div>";
   }
 

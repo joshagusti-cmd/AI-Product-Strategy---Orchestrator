@@ -21,7 +21,7 @@ Controls you can't use for your role are disabled in the UI, and the same restri
 
 **Teams.** Open the **Workspace** modal from the auth widget to invite a teammate by email and pick their role. They join automatically the next time they sign in with that email. If you belong to more than one workspace, a switcher appears so you can pick which one is active.
 
-**Plan & usage.** Every workspace has a plan — Free, Pro, or Enterprise — which sets how many Orchestrate runs it can make per rolling 24 hours (20/100/500). An admin changes the plan from the Workspace modal. There's no real billing behind this yet — changing the plan just changes the enforced limit.
+**Plan & usage.** Every workspace has a plan — Free, Pro, or Enterprise — which sets two real, enforced caps: how many Orchestrate runs it can make per rolling 24 hours (20/100/500) and how many real dollars it can spend per rolling 24 hours ($5/$25/$150, priced at real Anthropic rates) — either cap alone can stop a fresh run. An admin changes the plan from the Workspace modal, which changes both caps together. There's no real billing behind this yet — changing the plan just changes the enforced limits.
 
 **Emergency Stop.** The Workspace modal also has a real, one-switch kill for a real incident — bigger and blunter than disabling one agent in Agent Registry. An admin turns it on and every new Orchestrate run, every paused-run resume, and every external agent's `check_approval` poll (see **Connecting an agent you already run somewhere else** below) is genuinely frozen, workspace-wide, until an admin turns it off. Every member sees whether it's active and who activated it; only an admin can flip it. It's real for everything Aiven itself runs — it can't reach into an external agent's own code that never checks in first, the same honest limit that control always has.
 
@@ -46,7 +46,7 @@ What happens next is real: six independent Claude API calls run in sequence — 
 
 **Prompt-injection screening.** Your objective is also checked, before anything else touches it, for language that reads like an attempt to override an agent's instructions or extract its system prompt — "ignore previous instructions," "reveal your system prompt," chat-template markers, jailbreak framing, and similar. A match is neutralized in place as `[FLAGGED:PROMPT_INJECTION]` and the run still proceeds with the rest of your objective intact — you'll see a toast naming what was flagged, and it's logged to the Audit Trail as a real, high-severity finding. Same honesty as redaction: a real pattern match, not a claim of true intent detection.
 
-**Rate limit.** Your workspace's plan caps how many Orchestrate runs you can make per rolling 24 hours. The console shows your current usage; hitting the cap returns a clear error rather than silently failing.
+**Rate limit.** Your workspace's plan caps how many Orchestrate runs you can make per rolling 24 hours — and, separately, how many real dollars you can spend in that same window, since a handful of unusually complex runs can burn real budget a run-count cap alone wouldn't catch. The console shows your current usage; hitting either cap returns a clear error rather than silently failing. Both figures — runs used and real dollars spent, against both real caps — are also shown live in the Workspace modal and on the Model Spend Dashboard.
 
 **Saved templates.** Running the same kind of analysis on a schedule ("do this every month")? Set up the objective, scope, and routing the way you want, type a name in the **Save as template** box, and click save. A saved template shows up in the **Load a saved template** dropdown — picking one instantly fills in the objective, department/source chips, auto-route toggle, and every per-agent model assignment exactly as you saved them, ready to click Orchestrate. Delete a template from the same dropdown once you no longer need it. Templates are shared across your whole workspace, not just your own login.
 
@@ -110,7 +110,7 @@ A real, searchable archive of every completed Orchestrate run's full deliverable
 Two things live here, deliberately kept separate:
 
 - **Cost by tier / by model provider** — a modeled projection tied to the cascading Leader/Filler/Killer pricing strategy from the business case. Illustrative, not billed.
-- **Real Orchestrate spend** — every real Claude call your workspace has actually made, priced at real, current Anthropic per-model rates, broken down by model and by agent. This is measured, not modeled — it comes straight from what actually ran.
+- **Real Orchestrate spend** — every real Claude call your workspace has actually made, priced at real, current Anthropic per-model rates, broken down by model and by agent. This is measured, not modeled — it comes straight from what actually ran. A **"Today's spend / real cap"** tile shows the same rolling-24h figure the Edge Function actually enforces against your plan's real dollar cap — not a separate estimate.
 
 ---
 

@@ -87,6 +87,7 @@
         <div class="kpi"><div class="eyebrow">Orchestrate runs</div><div class="val tabular" id="real-run-count">0</div><div class="delta">6 agent calls each</div></div>
         <div class="kpi"><div class="eyebrow">Agent calls logged</div><div class="val tabular" id="real-call-count">0</div><div class="delta">individual model calls</div></div>
         <div class="kpi"><div class="eyebrow">Tokens processed</div><div class="val tabular" id="real-token-count">0</div><div class="delta">input + output</div></div>
+        <div class="kpi"><div class="eyebrow">Today's spend / real cap</div><div class="val tabular" id="real-today-spend">—</div><div class="delta" id="real-today-spend-delta">rolling 24h</div></div>
       </section>
       <div class="grid-two">
         <div class="panel" style="border:none; box-shadow:none;">
@@ -257,6 +258,26 @@
 
   Aiven.getRealSpend().then(renderRealSpend).catch(function (e) {
     Aiven.toast("Couldn't load real spend telemetry: " + e.message);
+  });
+
+  // Rolling-24h real dollar spend against the workspace's real
+  // daily_spend_cap_usd (migrations/0019) — the same second, real cap
+  // orchestrate/index.ts's checkSpendCap enforces server-side before a
+  // fresh run. Distinct from "Real spend to date" above, which is an
+  // all-time total with no cap attached.
+  Aiven.getUsage().then(function (usage) {
+    var el = document.getElementById("real-today-spend");
+    var delta = document.getElementById("real-today-spend-delta");
+    if (!usage) {
+      el.textContent = "—";
+      delta.textContent = "sign in to see this workspace's real cap";
+      return;
+    }
+    var pct = usage.spendCapUsd > 0 ? Math.round((usage.spendUsedUsd / usage.spendCapUsd) * 100) : 0;
+    el.textContent = "$" + usage.spendUsedUsd.toFixed(2) + " / $" + usage.spendCapUsd.toFixed(2);
+    delta.textContent = "rolling 24h · " + pct + "% of real cap";
+  }).catch(function (e) {
+    Aiven.toast("Couldn't load today's spend cap: " + e.message);
   });
 })();
 </script>

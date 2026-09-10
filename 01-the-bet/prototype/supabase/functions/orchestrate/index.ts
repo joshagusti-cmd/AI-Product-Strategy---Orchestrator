@@ -38,6 +38,14 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // run still only costs one unit of quota, no matter how many real API
 // calls the pipeline takes under the hood.
 //
+// A second, real dollar cap (migrations/0019, `daily_spend_cap_usd`) is
+// checked right alongside the run-count one — see checkSpendCap below.
+// The run-count cap alone can't catch a workspace burning real budget
+// through unusually complex, long-output objectives at a normal run
+// count; this sums the same real `orchestrate_call_log` telemetry
+// spend.html's "Real Orchestrate spend" panel already reads, priced at
+// the identical real Anthropic per-model rates.
+//
 // Optional automatic model routing (`autoRoute: true` in the request
 // body) replaces the manual per-agent `agentModels` selections with a
 // real, deterministic cascade-by-risk decision — see computeAutoRoute
@@ -517,6 +525,54 @@ async function checkRateLimit(workspaceId: string) {
   if (used >= limit) {
     return {
       error: `This workspace has used its Orchestrate limit for today (${used}/${limit} in the last 24h). The cap resets on a rolling basis — try again later.`,
+      status: 429,
+    };
+  }
+  return null;
+}
+
+// Real Anthropic per-model pricing, $ / million tokens (input, output).
+// Duplicated from spend.html's own copy (this repo's Edge Functions are
+// each self-contained, no shared imports) — keep both in sync if either
+// changes. Source: the current published Claude API price list.
+// Anything not in this table (shouldn't happen — this file only ever
+// calls one of these three) is priced at $0 rather than guessed.
+const REAL_PRICING: Record<string, { in: number; out: number }> = {
+  "claude-sonnet-5": { in: 2.00, out: 10.00 },
+  "claude-opus-4-8": { in: 5.00, out: 25.00 },
+  "claude-haiku-4-5": { in: 1.00, out: 5.00 },
+};
+
+function realCost(model: string, inputTokens: number, outputTokens: number): number {
+  const p = REAL_PRICING[model] || { in: 0, out: 0 };
+  return (inputTokens / 1e6) * p.in + (outputTokens / 1e6) * p.out;
+}
+
+// Real dollar spend cap (migrations/0019) — checked in addition to
+// checkRateLimit above, not instead of it: a run-count cap alone can't
+// catch a workspace burning real budget through unusually complex,
+// long-output objectives at a normal run count. Sums real cost from
+// every orchestrate_call_log row (migrations/0010) in the same rolling
+// 24h window the run-count cap uses, priced with the identical table
+// spend.html's "Real Orchestrate spend" panel already uses — this is
+// the same real telemetry, not a separate estimate.
+async function checkSpendCap(workspaceId: string) {
+  const wsResp = await serviceRoleFetch(`workspaces?select=daily_spend_cap_usd&id=eq.${workspaceId}`);
+  if (!wsResp.ok) return { error: "Failed to look up workspace spend cap.", status: 500 };
+  const wsRows = await wsResp.json();
+  const cap = Number(wsRows[0]?.daily_spend_cap_usd) || 5;
+
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const callResp = await serviceRoleFetch(
+    `orchestrate_call_log?select=model,input_tokens,output_tokens&workspace_id=eq.${workspaceId}&called_at=gte.${since}`,
+  );
+  if (!callResp.ok) return { error: "Failed to check current spend.", status: 500 };
+  const calls: Array<{ model: string; input_tokens: number; output_tokens: number }> = await callResp.json();
+  const spent = calls.reduce((sum, c) => sum + realCost(c.model, c.input_tokens || 0, c.output_tokens || 0), 0);
+
+  if (spent >= cap) {
+    return {
+      error: `This workspace has used its real daily spend cap ($${spent.toFixed(2)} / $${cap.toFixed(2)} in the last 24h, priced at real Anthropic rates). The cap resets on a rolling basis — try again later, or an admin can raise it via the plan in the Workspace panel.`,
       status: 429,
     };
   }
@@ -1087,6 +1143,11 @@ Deno.serve(async (req: Request) => {
   const rateLimitError = await checkRateLimit(workspaceId);
   if (rateLimitError) {
     return json({ error: rateLimitError.error }, rateLimitError.status);
+  }
+
+  const spendCapError = await checkSpendCap(workspaceId);
+  if (spendCapError) {
+    return json({ error: spendCapError.error }, spendCapError.status);
   }
 
   const pipeline = await loadPipelineAgents(workspaceId);
