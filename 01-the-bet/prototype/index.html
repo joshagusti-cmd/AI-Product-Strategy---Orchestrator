@@ -1248,6 +1248,12 @@
       toast("Redacted " + redText + " from this run's objective/output before it reached Claude or was stored.");
     }
 
+    var injectionFlags = response.promptInjectionFlags || [];
+    if (injectionFlags.length) {
+      var injText = injectionFlags.map(function (f) { return f.count + " " + f.label.replace(/_/g, " "); }).join(", ");
+      toast("⚠️ Objective flagged for possible prompt-injection language (" + injText + ") — neutralized before it reached any agent.");
+    }
+
     var routing = response.routing;
     if (routing && routing.mode === "auto") {
       var tierDesc = {
@@ -1345,6 +1351,11 @@
       if (pausedRedactions.length) {
         var pausedRedText = pausedRedactions.map(function (r) { return r.count + " " + r.type; }).join(", ");
         toast("Redacted " + pausedRedText + " from this run's objective/output before it reached Claude or was stored.");
+      }
+      var pausedInjectionFlags = response.promptInjectionFlags || [];
+      if (pausedInjectionFlags.length) {
+        var pausedInjText = pausedInjectionFlags.map(function (f) { return f.count + " " + f.label.replace(/_/g, " "); }).join(", ");
+        toast("⚠️ Objective flagged for possible prompt-injection language (" + pausedInjText + ") — neutralized before it reached any agent.");
       }
       return;
     }

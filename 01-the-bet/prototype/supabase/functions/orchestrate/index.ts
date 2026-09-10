@@ -82,6 +82,14 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // and every agent's title/detail/summary/findings/recommendations/
 // riskFlags text before it's stored or returned (output). See
 // redactSensitive/mergeRedactions below and their call sites.
+//
+// The objective also gets real prompt-injection screening, before
+// redaction and before anything else touches it: a deterministic
+// pattern match for override/extraction phrasing (see
+// screenPromptInjection below) neutralizes a matched span in place, so
+// that text never reaches an agent's context, and logs a real,
+// immediate audit_log entry — this only ever runs once, at intake, not
+// per-agent like redaction.
 
 // Objective text and scope size are the only signals available before
 // any agent has run — this is a real, cheap, explainable heuristic, not
@@ -215,6 +223,47 @@ function mergeRedactions(ctx: { redactions: Redaction[] }, found: Redaction[]) {
     if (existing) existing.count += r.count;
     else ctx.redactions.push({ type: r.type, count: r.count });
   }
+}
+
+// Real prompt-injection screening on the objective — a real heuristic
+// pass, same honesty as redactSensitive above and computeAutoRoute
+// below: a deterministic pattern match for known override/extraction
+// phrasing, not a claim of true intent classification. Runs once, on
+// the raw objective, before it's ever redacted or prompted to any
+// agent — a matched span is neutralized in place (never silently
+// dropped) so the raw override text never reaches an agent's context,
+// while the objective's real business content around it is untouched.
+type InjectionFlag = { label: string; count: number };
+
+// Deliberately narrow and specific (imperative override language,
+// system-prompt extraction, chat-template markers, jailbreak framing)
+// rather than broad terms like "act as" that would false-positive on
+// ordinary business objectives ("act as the lead reviewer on this
+// contract").
+const PROMPT_INJECTION_PATTERNS: Array<{ label: string; re: RegExp }> = [
+  { label: "instruction_override", re: /\b(?:ignore|disregard|forget)\b(?:[^.\n]{0,30}?)\b(?:previous|prior|above|earlier|all)\b(?:[^.\n]{0,20}?)\binstructions?\b/gi },
+  { label: "role_override", re: /\byou are now\b/gi },
+  { label: "new_instructions_marker", re: /\bnew instructions?\s*:/gi },
+  { label: "system_prompt_extraction", re: /\b(?:reveal|print|show|output|repeat)\b(?:[^.\n]{0,20}?)\b(?:your |the )?system prompt\b/gi },
+  { label: "prompt_leak_question", re: /\bwhat (?:is|was) your (?:system )?prompt\b/gi },
+  { label: "chat_template_injection", re: /<\|im_(?:start|end)\|>|\[\s*system\s*\]/gi },
+  { label: "role_marker_injection", re: /^\s*(?:system|assistant)\s*:/gim },
+  { label: "jailbreak_framing", re: /\bjailbreak\b|\bdo anything now\b|\bDAN mode\b/gi },
+  { label: "bypass_safety", re: /\b(?:bypass|disable|turn off)\b(?:[^.\n]{0,20}?)\b(?:safety|guardrails?|restrictions?|filters?|policy)\b/gi },
+  { label: "unrestricted_persona", re: /\bact as (?:an? )?(?:unrestricted|uncensored|unfiltered)\b/gi },
+];
+
+function screenPromptInjection(text: string): { text: string; flags: InjectionFlag[] } {
+  if (!text) return { text: text || "", flags: [] };
+  const counts: Record<string, number> = {};
+  let out = text;
+  for (const { label, re } of PROMPT_INJECTION_PATTERNS) {
+    out = out.replace(re, (m) => {
+      counts[label] = (counts[label] || 0) + 1;
+      return "[FLAGGED:PROMPT_INJECTION]";
+    });
+  }
+  return { text: out, flags: Object.keys(counts).map((label) => ({ label, count: counts[label] })) };
 }
 
 // Real Claude model each dropdown/registry label maps to. The dropdown
@@ -590,6 +639,34 @@ async function logRedactions(workspaceId: string, redactions: Redaction[]) {
   }
 }
 
+// Writes one real audit_log entry the moment prompt-injection screening
+// flags the objective — logged immediately at intake (unlike
+// logRedactions above, this only ever fires once, before the pipeline
+// even starts, since the objective is screened exactly once regardless
+// of whether the run later pauses or resumes) rather than waiting for a
+// completion point. High severity: an actual override/extraction
+// attempt in the objective is a more pointed signal than an
+// incidentally-typed email address.
+async function logPromptInjectionFlags(workspaceId: string, flags: InjectionFlag[]) {
+  if (!flags.length) return;
+  const summary = flags.map((f) => `${f.count} ${f.label}`).join(", ");
+  try {
+    await serviceRoleFetch("audit_log", {
+      method: "POST",
+      body: JSON.stringify({
+        workspace_id: workspaceId,
+        actor: "Aiven Orchestrator",
+        action: "Flagged possible prompt-injection language in the objective",
+        risk: "High",
+        detail: `Neutralized ${summary} before the objective was ever prompted to an agent.`,
+      }),
+    });
+  } catch (err) {
+    // Telemetry must never break a real orchestration run.
+    console.error("orchestrate: failed to log prompt-injection flags", err);
+  }
+}
+
 // Reads the workspace's Core-tier policy (id: 'compliance' — the tier
 // every real pipeline agent belongs to; see migrations/0011). Returns
 // null if it's missing (e.g. hand-edited out of the demo data) so the
@@ -716,6 +793,7 @@ type RunCtx = {
   modelsUsed: Set<string>;
   substitutions: Array<{ agentId: string; agentName: string; requested: string; used: string }>;
   redactions: Redaction[];
+  promptInjectionFlags: InjectionFlag[];
 };
 
 type AgentOutcome =
@@ -830,6 +908,7 @@ async function runOneAgent(agent: PipelineAgent, ctx: RunCtx): Promise<AgentOutc
         agentModels: ctx.agentModels, autoRoute: ctx.autoRoute,
         steps: ctx.steps, totalInputTokens: ctx.totalInputTokens, totalOutputTokens: ctx.totalOutputTokens,
         modelsUsed: Array.from(ctx.modelsUsed), substitutions: ctx.substitutions, redactions: ctx.redactions,
+        promptInjectionFlags: ctx.promptInjectionFlags,
       };
       const approvalId = await createPendingApproval(ctx.workspaceId, riskFlag, runState);
       return { kind: "paused", approvalId, riskFlag, policy: policy! };
@@ -901,6 +980,9 @@ async function handleResume(workspaceId: string, userId: string, approvalId: str
     // in run_state at pause time — carrying forward what was already
     // found, not re-scanning already-redacted `[REDACTED:X]` text.
     redactions: Array.isArray(rs.redactions) ? rs.redactions.slice() : [],
+    // Same reasoning: prompt-injection screening only ever runs once, at
+    // objective intake in the main handler — carry forward what it found.
+    promptInjectionFlags: Array.isArray(rs.promptInjectionFlags) ? rs.promptInjectionFlags.slice() : [],
   };
   // Snapshot so logRedactions below logs only what THIS resume newly
   // found, not the pre-pause counts again — those were already logged
@@ -936,6 +1018,7 @@ async function handleResume(workspaceId: string, userId: string, approvalId: str
           routing: routingInfo(ctx),
           resumedApprovalId: approvalId,
           redactions: ctx.redactions,
+          promptInjectionFlags: ctx.promptInjectionFlags,
         });
       }
       // A real pipeline could in principle have a second risk-gate-like
@@ -944,7 +1027,7 @@ async function handleResume(workspaceId: string, userId: string, approvalId: str
       // work, not get lost.
       if (outcome.kind === "paused") {
         await logRedactions(workspaceId, newRedactionsSinceResume());
-        return json({ paused: true, approvalId: outcome.approvalId, steps: ctx.steps, riskFlag: outcome.riskFlag, routing: routingInfo(ctx), redactions: ctx.redactions });
+        return json({ paused: true, approvalId: outcome.approvalId, steps: ctx.steps, riskFlag: outcome.riskFlag, routing: routingInfo(ctx), redactions: ctx.redactions, promptInjectionFlags: ctx.promptInjectionFlags });
       }
     }
     return json({ error: "Resumed orchestration ended without a final result." }, 502);
@@ -1020,13 +1103,20 @@ Deno.serve(async (req: Request) => {
     return json({ error: "`objective` (string) is required." }, 400);
   }
 
+  // Prompt-injection screening runs first, on the raw objective, before
+  // redaction — neutralizing an override/extraction attempt before any
+  // other processing touches the text. Logged immediately, not held
+  // until a completion point (see logPromptInjectionFlags above).
+  const injectionScreen = screenPromptInjection(rawObjective);
+  await logPromptInjectionFlags(workspaceId, injectionScreen.flags);
+
   // Input redaction — the objective is the one piece of this request a
   // caller actually typed by hand, so it's the one real input surface
   // for PII/secrets to land on. Redacted once, here, before it's ever
   // used to route, prompt an agent, or get archived — everything
   // downstream (routing, briefing, orchestrate_runs.objective) only
-  // ever sees the redacted version.
-  const objectiveRedaction = redactSensitive(rawObjective);
+  // ever sees the redacted (and injection-screened) version.
+  const objectiveRedaction = redactSensitive(injectionScreen.text);
   const objective = objectiveRedaction.text;
 
   const briefing = `Business objective: ${objective}\nDepartments in scope: ${departments.join(", ") || "none specified"}\nData sources in scope: ${sources.join(", ") || "none specified"}`;
@@ -1041,6 +1131,7 @@ Deno.serve(async (req: Request) => {
     modelsUsed: new Set<string>(),
     substitutions: [],
     redactions: objectiveRedaction.redactions.slice(),
+    promptInjectionFlags: injectionScreen.flags.slice(),
   };
 
   try {
@@ -1062,6 +1153,7 @@ Deno.serve(async (req: Request) => {
           policy: { autonomy: outcome.policy.autonomy, riskThreshold: outcome.policy.risk_threshold },
           routing: routingInfo(ctx),
           redactions: ctx.redactions,
+          promptInjectionFlags: ctx.promptInjectionFlags,
         });
       }
       if (outcome.kind === "final") {
@@ -1076,6 +1168,7 @@ Deno.serve(async (req: Request) => {
           substitutions: ctx.substitutions,
           routing: routingInfo(ctx),
           redactions: ctx.redactions,
+          promptInjectionFlags: ctx.promptInjectionFlags,
         });
       }
       // "continue" — fall through to the next agent
