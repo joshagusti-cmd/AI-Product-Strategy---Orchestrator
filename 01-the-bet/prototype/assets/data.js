@@ -500,7 +500,9 @@
   async function getUsage() {
     await ready;
     if (currentWorkspaceId === DEMO_WORKSPACE_ID) return null;
-    var wsRes = await sb.from("workspaces").select("daily_orchestrate_limit, plan").eq("id", currentWorkspaceId).maybeSingle();
+    var wsRes = await sb.from("workspaces")
+      .select("daily_orchestrate_limit, plan, emergency_stop, emergency_stop_at, emergency_stop_by_email")
+      .eq("id", currentWorkspaceId).maybeSingle();
     if (wsRes.error) throw wsRes.error;
     var limit = (wsRes.data && wsRes.data.daily_orchestrate_limit) || 20;
     var plan = (wsRes.data && wsRes.data.plan) || "free";
@@ -508,7 +510,12 @@
     var countRes = await sb.from("orchestrate_usage").select("id", { count: "exact", head: true })
       .eq("workspace_id", currentWorkspaceId).gte("called_at", since);
     if (countRes.error) throw countRes.error;
-    return { used: countRes.count || 0, limit: limit, plan: plan };
+    return {
+      used: countRes.count || 0, limit: limit, plan: plan,
+      emergencyStop: !!(wsRes.data && wsRes.data.emergency_stop),
+      emergencyStopAt: (wsRes.data && wsRes.data.emergency_stop_at) || null,
+      emergencyStopByEmail: (wsRes.data && wsRes.data.emergency_stop_by_email) || null
+    };
   }
 
   // Real, measured Orchestrate spend: one row per individual agent call
@@ -661,6 +668,19 @@
     if (r.error) throw r.error;
   }
 
+  // Admin-only RPC (migrations/0018) — the bigger, blunter sibling of
+  // the per-agent Enabled toggle in Agent Registry. Freezes/unfreezes
+  // every real action this workspace's server side actually controls:
+  // a new Orchestrate run, resuming a paused one (orchestrate/index.ts),
+  // and an external agent's own check_approval poll (agent-events/
+  // index.ts) — real for real, but still can't reach into an external
+  // agent's own code (see USER_GUIDE.md's honest limit on that).
+  async function setEmergencyStop(active) {
+    requireOwnWorkspace();
+    var r = await sb.rpc("set_emergency_stop", { ws: currentWorkspaceId, active: !!active });
+    if (r.error) throw r.error;
+  }
+
   /* ---------------- auth actions ---------------- */
   function currentRedirectUrl() {
     return global.location.origin + global.location.pathname;
@@ -695,6 +715,27 @@
     return "<select class='control team-role-select' " + idAttr + " " + valueAttr + ">" +
       ROLE_OPTIONS.map(function (r) { return "<option value='" + r + "'" + (r === selected ? " selected" : "") + ">" + roleLabel(r) + "</option>"; }).join("") +
       "</select>";
+  }
+
+  // The bigger, blunter sibling of Agent Registry's per-agent Enabled
+  // toggle (migrations/0018) — shown first, above Plan, since it's the
+  // one control here with the widest real blast radius. Visible to
+  // every member (so nobody wonders why Orchestrate is suddenly
+  // frozen); only an admin gets the button that flips it.
+  function renderEmergencyStopSection(usage, amAdmin) {
+    if (!usage) return "";
+    var active = !!usage.emergencyStop;
+    var status = active
+      ? "<p class='hint critical-hint'>⛔ <strong>Active</strong> — every new Orchestrate run, every paused-run resume, and every external agent's approval check is frozen" +
+        (usage.emergencyStopByEmail ? " (activated by " + usage.emergencyStopByEmail + (usage.emergencyStopAt ? ", " + timeAgo(usage.emergencyStopAt) : "") + ")" : "") + "."
+      : "<p class='hint'>Not active — Orchestrate and external agent gate checks run normally.</p>";
+    var button = amAdmin
+      ? "<div class='plan-actions'><button class='btn small ghost" + (active ? "" : " reject") + "' id='aiven-emergency-stop-btn' type='button'>" +
+        (active ? "Lift emergency stop" : "Activate emergency stop") + "</button></div>"
+      : "";
+    return "<div class='team-section'><h4>Emergency Stop</h4>" + status + button +
+      "<p class='hint'>Real, not cosmetic — but it can only freeze what Aiven itself runs. An external agent's own code still decides whether to check in first; see the Agent Registry guide.</p>" +
+      "</div>";
   }
 
   // Fixed plan -> Orchestrate-cap table, mirroring the one enforced
@@ -755,6 +796,7 @@
       : "<p class='muted'>Only workspace admins can invite, remove, or change roles. Ask an admin (" + roleLabel("admin") + ") on this list.</p>";
 
     body.innerHTML =
+      renderEmergencyStopSection(usage, amAdmin) +
       renderPlanSection(usage, amAdmin) +
       "<div class='team-section'><h4>Members</h4>" + membersHtml + "</div>" +
       "<div class='team-section'><h4>Pending invites</h4>" + invitesHtml + "</div>" +
@@ -763,6 +805,23 @@
     async function refresh() {
       var results = await Promise.all([listTeam(), getUsage()]);
       renderTeamBody(body, results[0], myRole, results[1]);
+    }
+
+    var stopBtn = body.querySelector("#aiven-emergency-stop-btn");
+    if (stopBtn) {
+      stopBtn.addEventListener("click", async function () {
+        var activating = !usage.emergencyStop;
+        if (activating && !global.confirm("Freeze every new Orchestrate run, every paused-run resume, and every external agent's approval check in this workspace, right now? Lift it the same way once the incident is resolved.")) return;
+        stopBtn.disabled = true;
+        try {
+          await setEmergencyStop(activating);
+          toast(activating ? "Emergency stop activated — Orchestrate is frozen." : "Emergency stop lifted — Orchestrate is back to normal.");
+          await refresh();
+        } catch (e) {
+          toast("Failed to change the emergency stop: " + e.message);
+          stopBtn.disabled = false;
+        }
+      });
     }
 
     body.querySelectorAll("[data-set-plan]").forEach(function (btn) {
@@ -1008,6 +1067,7 @@
     deleteTemplate: deleteTemplate,
     touchTemplateUsed: touchTemplateUsed,
     setPlan: setPlan,
+    setEmergencyStop: setEmergencyStop,
     timeAgo: timeAgo,
     timeClock: timeClock,
     toast: toast,

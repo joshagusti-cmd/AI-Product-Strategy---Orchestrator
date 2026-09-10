@@ -560,7 +560,12 @@
     }
     hint.textContent = "Signed in — Orchestrate runs 6 real, independent Claude calls against your workspace.";
     Aiven.getUsage().then(function (usage) {
-      if (usage) hint.textContent += " (" + usage.used + "/" + usage.limit + " runs used today)";
+      if (!usage) return;
+      if (usage.emergencyStop) {
+        hint.textContent = "⛔ Emergency stop is active — Orchestrate is frozen until an admin lifts it (Workspace panel).";
+        return;
+      }
+      hint.textContent += " (" + usage.used + "/" + usage.limit + " runs used today)";
     }).catch(function () { /* non-critical — leave the hint as-is */ });
   }
 

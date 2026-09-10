@@ -177,6 +177,7 @@ select.auth-ws-select { max-width: 150px; padding: 6px 9px; font-size: 11px; }
 .team-invite-form input.control { flex: 1; min-width: 140px; }
 .team-invite-form select.control { flex: 0 0 auto; }
 .team-section .hint { margin: 8px 0 0; font-size: 11px; color: var(--text-mute); }
+.team-section .hint.critical-hint { color: var(--critical); font-size: 12px; }
 .plan-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .plan-badge {
   font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;

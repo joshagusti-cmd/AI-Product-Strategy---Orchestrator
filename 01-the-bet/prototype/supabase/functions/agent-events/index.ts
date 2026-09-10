@@ -12,6 +12,10 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // honest limit every real governance platform has for something it
 // doesn't run itself.
 //
+// A workspace-wide emergency stop (migrations/0018) is also checked on
+// every call here — the same real flag orchestrate/index.ts checks for
+// internal runs. See isEmergencyStopped below.
+//
 // Authenticated by the agent's own API key (generated client-side, once,
 // at registration in agents.html — see assets/data.js
 // registerExternalAgent), not a Supabase user session: the caller here
@@ -90,6 +94,23 @@ function shouldPause(policy: { autonomy: string; risk_threshold: number } | null
   return score >= policy.risk_threshold;
 }
 
+// Workspace-wide emergency stop (migrations/0018) — checked for every
+// call this function gets, using the same real flag orchestrate/index.ts
+// checks for internal runs. Two real effects here: check_approval always
+// answers "not yet" while it's active, regardless of the approval's
+// actual status, and any risk flag reported while it's active gets
+// gated on the spot, regardless of whether it would normally cross the
+// Core policy's threshold — the same "when in doubt, freeze" stance the
+// internal pipeline gets from being blocked outright. This still can't
+// reach into an external agent's own code (see the file header) — it
+// only makes the real answer available the moment that code asks.
+async function isEmergencyStopped(workspaceId: string): Promise<boolean> {
+  const resp = await serviceRoleFetch(`workspaces?select=emergency_stop&id=eq.${workspaceId}`);
+  if (!resp.ok) return false;
+  const rows = await resp.json();
+  return !!rows[0]?.emergency_stop;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: CORS_HEADERS });
@@ -125,6 +146,12 @@ Deno.serve(async (req: Request) => {
     if (!approvalId || typeof approvalId !== "string") {
       return json({ error: "`approvalId` (string) is required." }, 400);
     }
+    if (await isEmergencyStopped(agent.workspaceId)) {
+      // Deliberately reports "pending" even if the real row says
+      // "approved" — while the workspace is frozen, the one honest
+      // answer for a well-behaved agent to act on is "not yet."
+      return json({ status: "pending", emergencyStop: true });
+    }
     const resp = await serviceRoleFetch(`approvals?workspace_id=eq.${agent.workspaceId}&id=eq.${approvalId}&select=status`);
     if (!resp.ok) return json({ error: "Failed to look up that approval." }, 500);
     const rows = await resp.json();
@@ -153,11 +180,13 @@ Deno.serve(async (req: Request) => {
     body: JSON.stringify({ external_last_seen_at: new Date().toISOString() }),
   });
 
+  const stopped = await isEmergencyStopped(agent.workspaceId);
+
   let approvalId: string | null = null;
   let gated = false;
   if (riskFlag && riskFlag.severity && riskFlag.text) {
-    const policy = await getCompliancePolicy(agent.workspaceId);
-    if (shouldPause(policy, riskFlag.severity)) {
+    const policy = stopped ? null : await getCompliancePolicy(agent.workspaceId);
+    if (stopped || shouldPause(policy, riskFlag.severity)) {
       gated = true;
       approvalId = "ext-" + crypto.randomUUID();
       await serviceRoleFetch("approvals", {
@@ -204,5 +233,5 @@ Deno.serve(async (req: Request) => {
     }),
   });
 
-  return json({ ok: true, gated, approvalId });
+  return json({ ok: true, gated, approvalId, emergencyStop: stopped });
 });
