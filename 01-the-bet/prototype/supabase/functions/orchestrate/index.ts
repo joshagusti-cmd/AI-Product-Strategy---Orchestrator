@@ -78,7 +78,12 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // completion) also gets archived in full — see recordRun below,
 // migrations/0013_workflow_history.sql — so workflow-history.html can
 // redisplay a past deliverable exactly as it looked, instead of it
-// only ever existing in the browser tab that generated it.
+// only ever existing in the browser tab that generated it. Each
+// archived step now also carries the exact system/user prompt that
+// agent's real Claude call actually received (captured at call time in
+// runOneAgent, not reconstructed after the fact) — full prompt/response
+// visibility per step, shown behind a "View prompt" toggle in Workflow
+// History.
 //
 // A workspace-wide emergency stop (migrations/0018) is checked first,
 // before any of the above — one admin-flipped switch (the Workspace
@@ -917,7 +922,15 @@ type RunCtx = {
   autoRoute: boolean;
   autoRouteResult: ReturnType<typeof computeAutoRoute> | null;
   briefing: string;
-  steps: Array<{ agentId: string; agentName: string; title: string; detail: string; riskFlag?: { severity: string; text: string } }>;
+  // promptSystem/promptUser: the exact prompt this agent's real Claude
+  // call actually received — captured at call time, not reconstructed
+  // later, so it's the real prompt, not an approximation of it.
+  // Persisted into orchestrate_runs.steps (already jsonb, no schema
+  // change needed) and shown per-step in workflow-history.html — closes
+  // the "full prompt/response visibility" audit-depth gap. Already-real
+  // "response" visibility (title/detail/riskFlag, the writer's
+  // executiveSummary/findings/recommendations) predates this change.
+  steps: Array<{ agentId: string; agentName: string; title: string; detail: string; riskFlag?: { severity: string; text: string }; promptSystem?: string; promptUser?: string }>;
   totalInputTokens: number;
   totalOutputTokens: number;
   modelsUsed: Set<string>;
@@ -1003,7 +1016,7 @@ async function runOneAgent(agent: PipelineAgent, ctx: RunCtx): Promise<AgentOutc
       ...title.redactions, ...detail.redactions, ...executiveSummary.redactions,
       ...findings.flatMap((f) => f.redactions), ...riskFlags.flatMap((f) => f.redactions),
     ]);
-    ctx.steps.push({ agentId: agent.id, agentName: agent.name, title: title.text, detail: detail.text });
+    ctx.steps.push({ agentId: agent.id, agentName: agent.name, title: title.text, detail: detail.text, promptSystem: system, promptUser: user });
     return {
       kind: "final",
       result: {
@@ -1027,6 +1040,8 @@ async function runOneAgent(agent: PipelineAgent, ctx: RunCtx): Promise<AgentOutc
     agentName: agent.name,
     title: title.text,
     detail: detail.text,
+    promptSystem: system,
+    promptUser: user,
     ...(riskFlag && riskFlag.text ? { riskFlag } : {}),
   });
 

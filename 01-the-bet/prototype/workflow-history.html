@@ -22,6 +22,11 @@
   .run-detail ul { margin: 0; padding-left: 20px; }
   .run-detail ul li { font-size: 13px; line-height: 1.6; margin-bottom: 6px; max-width: 74ch; }
   .run-detail table.data { margin-top: 2px; }
+  .step-prompt { margin-top: 6px; }
+  .step-prompt summary { cursor: pointer; font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-mute); }
+  .step-prompt summary:hover { color: var(--text); }
+  .step-prompt .prompt-label { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-mute); margin: 8px 0 3px; }
+  .step-prompt pre { white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 11.5px; line-height: 1.5; background: var(--surface); border: 1px solid var(--border-soft); padding: 8px 10px; margin: 0; max-width: 74ch; }
   .compare-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
   .compare-bar .hint { font-size: 11.5px; color: var(--text-mute); }
   .compare-bar-actions { display: flex; gap: 8px; }
@@ -183,9 +188,24 @@
     var recs = (r.recommendations || []).map(function (rec) {
       return "<tr><td>" + rec.text + "</td><td>" + rec.owner + "</td><td>" + rec.nextStep + "</td><td><span class='risk-pill " + rec.priority + "'>" + rec.priority + "</span></td></tr>";
     }).join("") || "<tr><td colspan='4'>No recommendations recorded.</td></tr>";
+    // Full prompt visibility: the exact system/user prompt this agent's
+    // real Claude call actually received (captured at call time in
+    // orchestrate/index.ts, not reconstructed here) — closes the
+    // audit-depth gap of only ever showing the agent's response
+    // (title/detail/riskFlag), never what it was actually asked. Older
+    // archived runs (before this shipped) simply have no promptSystem/
+    // promptUser on their steps, so the toggle doesn't appear for them
+    // — an honest gap, not a fabricated backfill.
     var steps = (r.steps || []).map(function (s) {
+      var promptToggle = (s.promptSystem || s.promptUser)
+        ? "<details class='step-prompt'><summary>View prompt</summary>" +
+          (s.promptSystem ? "<div class='prompt-label'>System</div><pre>" + s.promptSystem + "</pre>" : "") +
+          (s.promptUser ? "<div class='prompt-label'>User</div><pre>" + s.promptUser + "</pre>" : "") +
+          "</details>"
+        : "";
       return "<tr><td class='name'>" + (s.agentName || s.agentId) + "</td><td>" + s.title + "</td><td>" + s.detail +
-        (s.riskFlag && s.riskFlag.text ? " <span class='risk-pill " + s.riskFlag.severity + "' style='margin-left:6px;'>" + s.riskFlag.severity + "</span>" : "") + "</td></tr>";
+        (s.riskFlag && s.riskFlag.text ? " <span class='risk-pill " + s.riskFlag.severity + "' style='margin-left:6px;'>" + s.riskFlag.severity + "</span>" : "") +
+        promptToggle + "</td></tr>";
     }).join("");
     var subs = (r.substitutions || []);
     var subsNote = subs.length
