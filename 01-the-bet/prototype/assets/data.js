@@ -554,6 +554,9 @@
   // substituted — the Shadow AI Audit's real discovery scan reads that
   // same field to find genuine ungoverned-model requests, not just the
   // Spend Dashboard's real cost breakdown this was originally added for.
+  // `id` (the row's own real primary key) is selected so the same scan
+  // can also key a real per-call anomaly finding to one specific real
+  // call, not just an aggregate.
   // Returns null for the read-only demo workspace (Orchestrate never
   // runs there, so there's nothing measured to show). Most-recent-first,
   // capped at 2000 rows — plenty for this prototype.
@@ -561,7 +564,7 @@
     await ready;
     if (currentWorkspaceId === DEMO_WORKSPACE_ID) return null;
     var r = await sb.from("orchestrate_call_log")
-      .select("agent_id, model, requested_model, input_tokens, output_tokens, called_at")
+      .select("id, agent_id, model, requested_model, input_tokens, output_tokens, called_at")
       .eq("workspace_id", currentWorkspaceId)
       .order("called_at", { ascending: false })
       .limit(2000);

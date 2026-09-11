@@ -54,7 +54,7 @@
 <div class="shell">
   <div class="page-head">
     <h1>&gt; Shadow AI Audit</h1>
-    <p>Real discovery, scoped to what this platform can actually see about itself: Agent Registry entries whose declared model isn't one this workspace can really call, and real Orchestrate runs that requested an ungoverned model and got silently substituted. Every find gets triaged: govern it (log it, keep the safe substitution) or kill it (reassign the agent to a real model). This does not scan for outside tool use — personal ChatGPT accounts, unsanctioned browser extensions — which would need real endpoint/CASB integration this prototype doesn't have.</p>
+    <p>Real discovery, scoped to what this platform can actually see about itself: Agent Registry entries whose declared model isn't one this workspace can really call, real Orchestrate runs that requested an ungoverned model and got silently substituted, and real per-call token-usage anomalies (a 3-sigma statistical outlier against that agent's own rolling baseline in this workspace's own telemetry — a real, deterministic check, not trained ML). Every find gets triaged: govern it (log it, accept as known) or kill it (act on it — reassign the agent, or dig into what that run actually asked for). This does not scan for outside tool use — personal ChatGPT accounts, unsanctioned browser extensions — which would need real endpoint/CASB integration this prototype doesn't have.</p>
   </div>
 
   <section class="kpi-strip" aria-label="Shadow AI metrics">
@@ -162,6 +162,53 @@
     });
   }
 
+  // Finding #3: anomaly detection over real historical call telemetry —
+  // a real, deterministic statistical check (classic 3-sigma outlier
+  // rule against each agent's own rolling baseline in
+  // orchestrate_call_log), not a claim of trained ML anomaly detection,
+  // same honesty as REAL_MODELS/computeRegistryFindings above. Flags an
+  // individual real call whose total token usage (input + output) is
+  // both more than 3 standard deviations above that same agent's own
+  // historical mean in this workspace AND a real, material size — a
+  // small workspace's thin call history, or an agent whose usage barely
+  // varies, correctly produces no findings rather than a false one.
+  var ANOMALY_MIN_BASELINE_CALLS = 5; // too little history to trust a baseline at all
+  var ANOMALY_FLOOR_TOKENS = 500;     // real but immaterial swings aren't worth flagging
+  function computeAnomalyFindings(callLog) {
+    var byAgent = {};
+    (callLog || []).forEach(function (row) {
+      var total = (row.input_tokens || 0) + (row.output_tokens || 0);
+      (byAgent[row.agent_id] = byAgent[row.agent_id] || []).push({ id: row.id, total: total });
+    });
+
+    var findings = [];
+    Object.keys(byAgent).forEach(function (agentId) {
+      var calls = byAgent[agentId];
+      if (calls.length < ANOMALY_MIN_BASELINE_CALLS) return;
+
+      var mean = calls.reduce(function (s, c) { return s + c.total; }, 0) / calls.length;
+      var variance = calls.reduce(function (s, c) { return s + Math.pow(c.total - mean, 2); }, 0) / calls.length;
+      var stddev = Math.sqrt(variance);
+      if (stddev === 0) return; // every call identical — no variance to be an outlier against
+
+      var threshold = mean + 3 * stddev;
+      var agentName = AGENT_NAMES[agentId] || agentId;
+      calls.forEach(function (c) {
+        if (c.total <= threshold || c.total < ANOMALY_FLOOR_TOKENS) return;
+        var multiple = mean > 0 ? c.total / mean : 0;
+        var risk = multiple >= 5 ? "High" : multiple >= 3 ? "Medium" : "Low";
+        findings.push({
+          id: "anomaly-" + agentId + "-" + c.id,
+          name: "A real " + agentName + " call used " + c.total.toLocaleString() + " tokens — " + multiple.toFixed(1) + "x this agent's own rolling average (" + Math.round(mean).toLocaleString() + ") in this workspace's real telemetry.",
+          owner: agentName,
+          risk: risk,
+          note: "Real statistical outlier (mean + 3σ against this agent's own call history, not ML) from orchestrate_call_log — could be a legitimately complex objective, or worth checking what that run actually asked for."
+        });
+      });
+    });
+    return findings;
+  }
+
   function renderKpis() {
     var tools = state.shadowTools;
     document.getElementById("kpi-found").textContent = tools.length;
@@ -217,7 +264,8 @@
       // getRealSpend() returns null there rather than an empty array.
       var callLog = Aiven.auth.isDemo() ? null : await Aiven.getRealSpend();
       var subFindings = callLog ? computeSubstitutionFindings(callLog) : [];
-      var allFindings = registryFindings.concat(subFindings);
+      var anomalyFindings = callLog ? computeAnomalyFindings(callLog) : [];
+      var allFindings = registryFindings.concat(subFindings, anomalyFindings);
 
       var existingIds = {};
       state.shadowTools.forEach(function (t) { existingIds[t.id] = true; });
@@ -226,7 +274,7 @@
       if (!newFindings.length) {
         Aiven.toast(allFindings.length
           ? "Scan complete — " + allFindings.length + " known finding(s) already on record, nothing new"
-          : "Scan complete — no ungoverned model usage found in this workspace's real data");
+          : "Scan complete — no ungoverned model usage or usage anomalies found in this workspace's real data");
         return;
       }
 
@@ -237,7 +285,7 @@
       }
       await Aiven.addAudit({
         actor: "Shadow AI scan", model: "—", risk: "—",
-        action: "Real discovery scan found " + newFindings.length + " new ungoverned-model finding" + (newFindings.length === 1 ? "" : "s"),
+        action: "Real discovery scan found " + newFindings.length + " new finding" + (newFindings.length === 1 ? "" : "s"),
         detail: newFindings.map(function (f) { return f.owner; }).join(", ") + " — derived from the real Agent Registry and Orchestrate call telemetry, not simulated."
       });
       Aiven.toast("Scan found " + newFindings.length + " new finding" + (newFindings.length === 1 ? "" : "s") + " — awaiting triage");

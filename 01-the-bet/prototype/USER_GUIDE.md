@@ -122,11 +122,12 @@ Two things live here, deliberately kept separate:
 
 A list of historical illustrative findings sits here as backdrop (a legacy scoring vendor, a spreadsheet macro, unmanaged personal tool use) — narrative from the original governance case study, not something this scan produced.
 
-**Run Shadow AI Scan** is real, though: it checks two things in your own workspace's real data —
+**Run Shadow AI Scan** is real, though: it checks three things in your own workspace's real data —
 1. Does any of the six real Command Center agents' assigned model (Agent Registry) not match a model this backend can actually call? That's real registry drift.
 2. Has a real Orchestrate run actually requested an ungoverned model (like "GPT-4o") and gotten silently substituted? That's a real, repeated request for something not really governed.
+3. Has a single real call's token usage spiked sharply above that same agent's own rolling average in your workspace? A real, deterministic statistical check (a 3-sigma outlier against that agent's own call history) — not trained anomaly-detection ML, and it needs at least 5 prior calls for that agent before it trusts a baseline at all, so a brand-new workspace correctly shows nothing here yet.
 
-Every new finding lands in the same queue as the historical ones, waiting on an Admin or Compliance Owner to **Govern** (log it, accept the safe substitution) or **Kill** (fix the registry). This can't detect outside tool use — a personal ChatGPT account, an unsanctioned browser extension — since nothing about those ever touches this app; that needs real endpoint/CASB integration and a real audit at a real customer.
+Every new finding lands in the same queue as the historical ones, waiting on an Admin or Compliance Owner to **Govern** (log it, accept as known) or **Kill** (act on it — fix the registry, or dig into what an anomalous run actually asked for). This can't detect outside tool use — a personal ChatGPT account, an unsanctioned browser extension — since nothing about those ever touches this app; that needs real endpoint/CASB integration and a real audit at a real customer.
 
 ---
 
