@@ -741,6 +741,47 @@
     return { auditDeleted: (row && row.audit_deleted) || 0, runsDeleted: (row && row.runs_deleted) || 0 };
   }
 
+  // Bring-your-own provider key, per workspace (migrations/0022) — a
+  // real OpenAI/Google API key an admin supplies, encrypted at rest via
+  // Supabase Vault, never re-readable through this client once saved
+  // (the row below carries only connection status: which providers are
+  // connected, and the real key's own last 4 characters, for a
+  // "Connected — ...ab12" display — never the key itself). The real
+  // key is only ever decrypted server-side, by orchestrate/index.ts's
+  // own service-role credential — see that file's
+  // get_provider_key_for_service_role, unreachable from any browser
+  // session, even this one. Returns null for the read-only demo
+  // workspace.
+  async function getProviderKeys() {
+    await ready;
+    if (currentWorkspaceId === DEMO_WORKSPACE_ID) return null;
+    var r = await sb.from("workspace_provider_keys")
+      .select("provider, key_suffix, created_at")
+      .eq("workspace_id", currentWorkspaceId);
+    if (r.error) throw r.error;
+    return r.data || [];
+  }
+
+  // Admin-only RPC (migrations/0022) — stores or rotates a real key for
+  // "openai" or "google". Encrypts it server-side via Supabase Vault;
+  // this call's own request body is the only place the raw key ever
+  // exists client-side, and it's never returned or displayed again.
+  async function setProviderKey(provider, apiKey) {
+    requireOwnWorkspace();
+    var r = await sb.rpc("set_provider_key", { ws: currentWorkspaceId, p_provider: provider, p_api_key: apiKey });
+    if (r.error) throw r.error;
+  }
+
+  // Admin-only RPC (migrations/0022) — deletes the underlying Vault
+  // secret for real, not just this workspace's pointer to it. That
+  // provider's agents fall back to the safe Claude substitute again,
+  // exactly as before a key was ever configured.
+  async function removeProviderKey(provider) {
+    requireOwnWorkspace();
+    var r = await sb.rpc("remove_provider_key", { ws: currentWorkspaceId, p_provider: provider });
+    if (r.error) throw r.error;
+  }
+
   // Workspace-configured webhook notifications (migrations/0020) — real,
   // admin-only config for the one incoming-webhook URL orchestrate/
   // index.ts posts a real HTTP request to the moment a run actually
@@ -949,7 +990,37 @@
       "</div>";
   }
 
-  function renderTeamBody(body, team, myRole, usage, webhookConfig, deliveries) {
+  // Bring-your-own provider key (migrations/0022) — a workspace's own
+  // real OpenAI/Google key, if any, makes that provider's models real
+  // for this workspace instead of the automatic Claude substitute.
+  // Never shows the key itself, only real connection status (which
+  // providers, and the real key's own last 4 characters) — the same
+  // "shown once, never again" discipline every credential-saving form
+  // in this console follows.
+  var PROVIDER_LABELS = { openai: "OpenAI (GPT-4o)", google: "Google (Gemini 1.5 Pro)" };
+  function renderProviderKeysSection(providerKeys, amAdmin) {
+    if (providerKeys === null) return "";
+    var byProvider = {};
+    (providerKeys || []).forEach(function (p) { byProvider[p.provider] = p; });
+    var rows = ["openai", "google"].map(function (provider) {
+      var cfg = byProvider[provider];
+      var statusHtml = "<div class='plan-row'><span class='plan-usage'>" + PROVIDER_LABELS[provider] + ": " +
+        (cfg ? "Connected — key ending ****" + cfg.key_suffix : "Not connected — falls back to Claude") + "</span></div>";
+      var formHtml = amAdmin
+        ? "<div class='team-invite-form'>" +
+          "<input class='control' id='aiven-provider-input-" + provider + "' type='password' placeholder='" + (cfg ? "Replace with a new key" : "Paste real API key") + "' autocomplete='off'>" +
+          "<button class='btn small' data-save-provider='" + provider + "' type='button'>Save</button>" +
+          (cfg ? "<button class='btn small ghost' data-remove-provider='" + provider + "' type='button'>Remove</button>" : "") +
+          "</div>"
+        : "";
+      return statusHtml + formHtml;
+    }).join("");
+    return "<div class='team-section'><h4>Provider Keys</h4>" + rows +
+      "<p class='hint'>Bring your own real OpenAI/Google key to make “GPT-4o”/“Gemini 1.5 Pro” real for this workspace instead of an automatic Claude substitute — encrypted at rest via Supabase Vault, never shown again once saved.</p>" +
+      "</div>";
+  }
+
+  function renderTeamBody(body, team, myRole, usage, webhookConfig, deliveries, providerKeys) {
     var amAdmin = myRole === "admin";
     var membersHtml = team.members.map(function (m) {
       var mine = currentUser && m.user_id === currentUser.id;
@@ -984,13 +1055,14 @@
       renderPlanSection(usage, amAdmin) +
       (usage ? renderWebhookSection(webhookConfig, deliveries, amAdmin) : "") +
       renderRetentionSection(usage, amAdmin) +
+      renderProviderKeysSection(providerKeys, amAdmin) +
       "<div class='team-section'><h4>Members</h4>" + membersHtml + "</div>" +
       "<div class='team-section'><h4>Pending invites</h4>" + invitesHtml + "</div>" +
       inviteFormHtml;
 
     async function refresh() {
-      var results = await Promise.all([listTeam(), getUsage(), getWebhookConfig(), getWebhookDeliveries()]);
-      renderTeamBody(body, results[0], myRole, results[1], results[2], results[3]);
+      var results = await Promise.all([listTeam(), getUsage(), getWebhookConfig(), getWebhookDeliveries(), getProviderKeys()]);
+      renderTeamBody(body, results[0], myRole, results[1], results[2], results[3], results[4]);
     }
 
     var stopBtn = body.querySelector("#aiven-emergency-stop-btn");
@@ -1132,6 +1204,39 @@
       inviteBtn.addEventListener("click", submitInvite);
       inviteInput.addEventListener("keydown", function (e) { if (e.key === "Enter") submitInvite(); });
     }
+
+    body.querySelectorAll("[data-save-provider]").forEach(function (btn) {
+      btn.addEventListener("click", async function () {
+        var provider = btn.getAttribute("data-save-provider");
+        var input = body.querySelector("#aiven-provider-input-" + provider);
+        var apiKey = input.value.trim();
+        if (!apiKey) { toast("Paste a real API key first."); return; }
+        btn.disabled = true;
+        try {
+          await setProviderKey(provider, apiKey);
+          toast((PROVIDER_LABELS[provider] || provider) + " key saved — real for this workspace going forward.");
+          await refresh();
+        } catch (e) {
+          toast("Failed to save key: " + e.message);
+          btn.disabled = false;
+        }
+      });
+    });
+    body.querySelectorAll("[data-remove-provider]").forEach(function (btn) {
+      btn.addEventListener("click", async function () {
+        var provider = btn.getAttribute("data-remove-provider");
+        if (!global.confirm("Remove this workspace's " + (PROVIDER_LABELS[provider] || provider) + " key? Its agents fall back to the safe Claude substitute again.")) return;
+        btn.disabled = true;
+        try {
+          await removeProviderKey(provider);
+          toast((PROVIDER_LABELS[provider] || provider) + " key removed.");
+          await refresh();
+        } catch (e) {
+          toast("Failed to remove key: " + e.message);
+          btn.disabled = false;
+        }
+      });
+    });
   }
   async function openTeamModal() {
     closeTeamModal();
@@ -1149,8 +1254,8 @@
     overlay.querySelector(".aiven-modal-close").addEventListener("click", closeTeamModal);
     var body = overlay.querySelector("#aiven-team-body");
     try {
-      var results = await Promise.all([listTeam(), getUsage(), getWebhookConfig(), getWebhookDeliveries()]);
-      renderTeamBody(body, results[0], getRole(), results[1], results[2], results[3]);
+      var results = await Promise.all([listTeam(), getUsage(), getWebhookConfig(), getWebhookDeliveries(), getProviderKeys()]);
+      renderTeamBody(body, results[0], getRole(), results[1], results[2], results[3], results[4]);
     } catch (e) {
       body.innerHTML = "<p class='muted'>Failed to load team: " + e.message + "</p>";
     }
@@ -1321,6 +1426,9 @@
     setEmergencyStop: setEmergencyStop,
     setDataRetention: setDataRetention,
     runDataRetentionNow: runDataRetentionNow,
+    getProviderKeys: getProviderKeys,
+    setProviderKey: setProviderKey,
+    removeProviderKey: removeProviderKey,
     getWebhookConfig: getWebhookConfig,
     setWebhookConfig: setWebhookConfig,
     getWebhookDeliveries: getWebhookDeliveries,

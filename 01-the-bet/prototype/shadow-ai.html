@@ -102,8 +102,12 @@
   // the full agents.html dropdown list: "Claude Haiku 4.5" is offered
   // there but isn't in MODEL_LABEL_TO_ID either, so picking it manually
   // gets substituted too — a real gap this scan is designed to surface,
-  // not paper over.
-  var REAL_MODELS = ["Claude Sonnet 5", "Claude Opus 4.8"];
+  // not paper over. Claude is always real; GPT-4o/Gemini 1.5 Pro join
+  // this list only for a workspace with a real BYOK key connected
+  // (migrations/0022) — computed fresh per scan from real connection
+  // status, not hardcoded here, since it's genuinely per-workspace.
+  var BASE_REAL_MODELS = ["Claude Sonnet 5", "Claude Opus 4.8"];
+  var PROVIDER_TO_LABEL = { openai: "GPT-4o", google: "Gemini 1.5 Pro" };
 
   // The only agent ids the real Edge Function ever actually calls (see
   // AGENT_DEFS in supabase/functions/orchestrate/index.ts). The agents
@@ -122,9 +126,9 @@
   // Registry) isn't one the backend can really call — every real run
   // for it silently falls back to Claude. A genuine governance-record
   // mismatch, read straight from the real agents table.
-  function computeRegistryFindings(agents) {
+  function computeRegistryFindings(agents, realModels) {
     return (agents || [])
-      .filter(function (a) { return REAL_AGENT_IDS.indexOf(a.id) !== -1 && REAL_MODELS.indexOf(a.model) === -1; })
+      .filter(function (a) { return REAL_AGENT_IDS.indexOf(a.id) !== -1 && realModels.indexOf(a.model) === -1; })
       .map(function (a) {
         return {
           id: "agent-model-" + a.id,
@@ -260,7 +264,15 @@
     scanBtn.disabled = true;
     scanBtn.textContent = "Scanning…";
     try {
-      var registryFindings = computeRegistryFindings(state.agents);
+      // A connected BYOK provider (migrations/0022) makes its model
+      // genuinely real for this workspace — folded into the real-models
+      // list fresh, per scan, rather than assumed static, since it's
+      // this specific workspace's own real connection status.
+      var providerKeys = Aiven.auth.isDemo() ? null : await Aiven.getProviderKeys();
+      var realModels = BASE_REAL_MODELS.concat(
+        (providerKeys || []).map(function (p) { return PROVIDER_TO_LABEL[p.provider]; }).filter(Boolean)
+      );
+      var registryFindings = computeRegistryFindings(state.agents, realModels);
       // Demo/anonymous workspace has no real Orchestrate telemetry —
       // getRealSpend() returns null there rather than an empty array.
       var callLog = Aiven.auth.isDemo() ? null : await Aiven.getRealSpend();

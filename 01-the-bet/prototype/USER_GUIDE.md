@@ -29,6 +29,8 @@ Controls you can't use for your role are disabled in the UI, and the same restri
 
 **Data retention.** The Workspace modal also has a Data Retention section: an admin can set an auto-delete window (30/90/180/365 days, or "No automatic deletion," which is the default for every workspace) for Audit Trail and Workflow History rows — a real, common GDPR/data-minimization ask. Set a window and it's enforced two real ways: automatically, once a day, and, for anyone who wants proof right now rather than trusting a background job, a **Run retention now** button that deletes for real, immediately, and tells you exactly how many rows it removed. This can't be undone, and it's scoped exactly to Audit Trail and Workflow History — not yet extended to spend telemetry or the audit trail Q&A history.
 
+**Provider Keys (bring your own OpenAI/Google key).** The Workspace modal also has a Provider Keys section: an admin can paste in this workspace's own real OpenAI or Google API key, encrypted at rest and never shown again once saved (only its last 4 characters, so you can tell which key is connected). The moment a key is saved, that provider becomes real for this workspace — picking "GPT-4o" or "Gemini 1.5 Pro" (Command Center or Agent Registry) genuinely calls that provider instead of silently falling back to Claude, and the Shadow AI Audit stops flagging it as drift. Aiven itself holds no platform-wide OpenAI/Google credential — this is real routing exactly for the workspaces that bring their own key, nothing shared across customers. **Remove** deletes the underlying encrypted key for good; that provider's agents fall back to Claude again, same as before it was connected.
+
 ---
 
 ## Command Center (`index.html`)
@@ -60,7 +62,7 @@ What happens next is real: six independent Claude API calls run in sequence — 
 
 The full roster of agents the orchestrator governs — across every department, not just the six live in the Command Center — with tier, assigned model, status, and what each one can and can't do without a human. Admins can reassign an agent's model here; for the six real Command Center agents, that reassignment actually changes which model runs them on the next Orchestrate call.
 
-Only two models are real per-call routing targets today — **Claude Sonnet 5** and **Claude Opus 4.8**. Assigning anything else (GPT-4o, Gemini 1.5 Pro, or Claude Haiku 4.5 via manual selection) doesn't error — the run silently falls back to that agent's Claude default and tells you so in a toast — but it does mean the registry's stated model and the real model running it have drifted apart. The **Shadow AI Audit** (below) is built to catch exactly that.
+**Claude Sonnet 5** and **Claude Opus 4.8** are always real per-call routing targets. **GPT-4o** and **Gemini 1.5 Pro** are real too, for a workspace that's connected its own OpenAI/Google key (see **Provider Keys**, below) — otherwise, or for Claude Haiku 4.5 via manual selection, assigning it doesn't error, the run silently falls back to that agent's Claude default and tells you so in a toast. Either way it means the registry's stated model and the real model running it have drifted apart. The **Shadow AI Audit** (below) is built to catch exactly that — and, once a provider's connected, it stops treating that provider's requests as drift, since they're genuinely real now.
 
 **Filtering.** Filter by tier, or by department — the department chips are built from whatever's actually in your workspace's registry, not a fixed list. Click the **Departments covered** KPI tile to jump straight to the department filter.
 
@@ -125,7 +127,7 @@ Two things live here, deliberately kept separate:
 A list of historical illustrative findings sits here as backdrop (a legacy scoring vendor, a spreadsheet macro, unmanaged personal tool use) — narrative from the original governance case study, not something this scan produced.
 
 **Run Shadow AI Scan** is real, though: it checks three things in your own workspace's real data —
-1. Does any of the six real Command Center agents' assigned model (Agent Registry) not match a model this backend can actually call? That's real registry drift.
+1. Does any of the six real Command Center agents' assigned model (Agent Registry) not match a model this workspace can actually call — factoring in any real OpenAI/Google key you've connected (Provider Keys, above)? That's real registry drift.
 2. Has a real Orchestrate run actually requested an ungoverned model (like "GPT-4o") and gotten silently substituted? That's a real, repeated request for something not really governed.
 3. Has a single real call's token usage spiked sharply above that same agent's own rolling average in your workspace? A real, deterministic statistical check (a 3-sigma outlier against that agent's own call history) — not trained anomaly-detection ML, and it needs at least 5 prior calls for that agent before it trusts a baseline at all, so a brand-new workspace correctly shows nothing here yet.
 
