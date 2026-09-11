@@ -27,6 +27,8 @@ Controls you can't use for your role are disabled in the UI, and the same restri
 
 **Webhook notifications.** The Workspace modal also has a Webhook Notifications section: an admin pastes a plain URL (any endpoint that accepts an HTTP POST — Slack's/Teams' own incoming-webhook URLs work, so does a generic one) and every member can see whether it's configured and its last real delivery status. The moment a run actually pauses for approval, Aiven POSTs a real JSON payload (workspace name, the run's objective, the risk flag's severity and text, the approval id, a timestamp) to that URL — nobody has to be actively watching the Approval Queue to find out a run is waiting on them. Every attempt, success or failure, is logged for real and shown as "last delivery: succeeded/failed, N ago" — not a leap of faith that it's working. Scope today: only a run pausing fires a webhook; there's no "send test webhook" button yet (a client-side test would run into CORS the pasted endpoint likely doesn't handle).
 
+**Data retention.** The Workspace modal also has a Data Retention section: an admin can set an auto-delete window (30/90/180/365 days, or "No automatic deletion," which is the default for every workspace) for Audit Trail and Workflow History rows — a real, common GDPR/data-minimization ask. Set a window and it's enforced two real ways: automatically, once a day, and, for anyone who wants proof right now rather than trusting a background job, a **Run retention now** button that deletes for real, immediately, and tells you exactly how many rows it removed. This can't be undone, and it's scoped exactly to Audit Trail and Workflow History — not yet extended to spend telemetry or the audit trail Q&A history.
+
 ---
 
 ## Command Center (`index.html`)
