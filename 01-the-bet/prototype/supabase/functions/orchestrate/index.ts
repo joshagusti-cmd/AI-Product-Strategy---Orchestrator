@@ -21,13 +21,19 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // fallback (see resolveAgentModel): an explicit per-run override (the
 // Command Center's per-agent dropdown) beats the registry's own
 // declared default model, which beats a fixed, always-real Claude
-// default for that agent's role. Only "Claude Sonnet 5" and "Claude
-// Opus 4.8" are real — no OpenAI/Google key is configured, so a
-// registry default or per-run request for anything else (e.g. the
-// seeded Finance/Strategy agents' "GPT-4o") falls back for real, every
-// time, and the response's `substitutions` array tells the frontend
-// exactly what ran instead, so the UI never silently claims a provider
-// it isn't actually calling.
+// default for that agent's role. "Claude Sonnet 5"/"Claude Opus 4.8"
+// are always real — this platform holds its own ANTHROPIC_API_KEY.
+// "GPT-4o"/"Gemini 1.5 Pro" are real too, but only for a workspace that
+// has brought its own real OpenAI/Google key (migrations/0022,
+// bring-your-own provider key — see resolveProviderKey/callOpenAI/
+// callGemini below): this platform holds no platform-wide credential
+// for either provider, by design, so multi-provider routing is real
+// exactly for the customers who configure a key, not a capability
+// Aiven itself grants everyone. Without a configured key, a request
+// for that provider falls back for real, every time, and the
+// response's `substitutions` array tells the frontend exactly what ran
+// instead, so the UI never silently claims a provider it isn't
+// actually calling.
 //
 // Also enforces a per-workspace rolling 24h spend cap (each workspace's
 // `daily_orchestrate_limit`, default 20) using the service role key —
@@ -286,14 +292,30 @@ function screenPromptInjection(text: string): { text: string; flags: InjectionFl
   return { text: out, flags: Object.keys(counts).map((label) => ({ label, count: counts[label] })) };
 }
 
-// Real Claude model each dropdown/registry label maps to. The dropdown
-// also offers "GPT-4o" and "Gemini 1.5 Pro" (illustrative multi-provider
-// options from the original design) — neither has a real key configured,
-// so they're deliberately absent here and any request for them falls
-// back to the agent's safe default (see resolveAgentModel below).
+// Real Claude model each dropdown/registry label maps to. Always real —
+// no workspace credential needed — since Anthropic is the one provider
+// this platform itself holds a key for (ANTHROPIC_API_KEY).
 const MODEL_LABEL_TO_ID: Record<string, string> = {
   "Claude Sonnet 5": "claude-sonnet-5",
   "Claude Opus 4.8": "claude-opus-4-8",
+};
+
+// The dropdown also offers "GPT-4o" and "Gemini 1.5 Pro". Unlike Claude,
+// this platform holds no platform-wide OpenAI/Google credential of its
+// own — migrations/0022 (bring-your-own provider key) lets a workspace
+// admin supply and store their own, encrypted via Supabase Vault. A
+// request for either label falls back to the agent's safe Claude
+// default (see resolveAgentModel below) UNLESS this specific workspace
+// has configured a real key for that provider, checked per-request via
+// resolveProviderKey/getProviderKeyForServiceRole — real routing, not
+// a claim of a credential this repo itself holds.
+const PROVIDER_MODEL_ID: Record<string, string> = {
+  "GPT-4o": "gpt-4o",
+  "Gemini 1.5 Pro": "gemini-1.5-pro",
+};
+const PROVIDER_FOR_LABEL: Record<string, "openai" | "google"> = {
+  "GPT-4o": "openai",
+  "Gemini 1.5 Pro": "google",
 };
 
 // One real pipeline agent, loaded from the workspace's own Agent
@@ -354,21 +376,59 @@ function safeFallbackFor(agent: PipelineAgent): { modelId: string; label: string
     : { modelId: "claude-sonnet-5", label: "Claude Sonnet 5" };
 }
 
-// Three-level resolution: an explicit per-run override beats the
+// Looks up whether this workspace has a real BYOK provider key
+// configured (migrations/0022), decrypting it server-side via the
+// service-role-only get_provider_key_for_service_role RPC — never
+// reachable by a browser session, even the admin's own who saved it.
+// Cached on ctx per real request so a six-agent run with several
+// OpenAI/Google requests only ever looks each provider up once, not
+// once per agent. Fails closed on any lookup error (falls back to
+// Claude, exactly the pre-BYOK behavior) rather than let a transient
+// read failure block a run outright.
+async function resolveProviderKey(ctx: RunCtx, provider: "openai" | "google"): Promise<string | null> {
+  if (provider in ctx.providerKeyCache) return ctx.providerKeyCache[provider];
+  let key: string | null = null;
+  try {
+    const resp = await serviceRoleFetch("rpc/get_provider_key_for_service_role", {
+      method: "POST",
+      body: JSON.stringify({ ws: ctx.workspaceId, p_provider: provider }),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      key = typeof data === "string" && data ? data : null;
+    }
+  } catch (err) {
+    console.error("orchestrate: failed to resolve provider key", provider, err);
+  }
+  ctx.providerKeyCache[provider] = key;
+  return key;
+}
+
+// Real per-provider routing: an explicit per-run override beats the
 // registry's own declared default, which beats the agent's safe
-// fallback. A requested label with no real key configured — whether
-// that request came from a per-run override or the registry's own
-// default — falls all the way to the safe fallback and records a real
-// substitution either way.
-function resolveAgentModel(agent: PipelineAgent, requestedLabel: unknown) {
+// fallback. "Claude Sonnet 5"/"Claude Opus 4.8" are always real
+// (MODEL_LABEL_TO_ID). "GPT-4o"/"Gemini 1.5 Pro" are real too, but only
+// for a workspace that has configured its own real key for that
+// provider (BYOK, migrations/0022) — checked here, live, per request.
+// Anything else — an unconfigured provider, or any other unreal
+// label — falls all the way to the agent's safe Claude fallback and
+// records a real substitution, exactly the pre-BYOK behavior.
+async function resolveAgentModel(ctx: RunCtx, agent: PipelineAgent, requestedLabel: unknown) {
   if (typeof requestedLabel === "string" && MODEL_LABEL_TO_ID[requestedLabel]) {
-    return { modelId: MODEL_LABEL_TO_ID[requestedLabel], label: requestedLabel, substitution: null as { agentId: string; agentName: string; requested: string; used: string } | null };
+    return { provider: "anthropic" as const, modelId: MODEL_LABEL_TO_ID[requestedLabel], apiKey: null as string | null, substitution: null as { agentId: string; agentName: string; requested: string; used: string } | null };
+  }
+  if (typeof requestedLabel === "string" && PROVIDER_FOR_LABEL[requestedLabel]) {
+    const provider = PROVIDER_FOR_LABEL[requestedLabel];
+    const key = await resolveProviderKey(ctx, provider);
+    if (key) {
+      return { provider, modelId: PROVIDER_MODEL_ID[requestedLabel], apiKey: key, substitution: null as { agentId: string; agentName: string; requested: string; used: string } | null };
+    }
   }
   const fallback = safeFallbackFor(agent);
   const substitution = typeof requestedLabel === "string" && requestedLabel !== fallback.label
     ? { agentId: agent.id, agentName: agent.name, requested: requestedLabel, used: fallback.label }
     : null;
-  return { modelId: fallback.modelId, label: fallback.label, substitution };
+  return { provider: "anthropic" as const, modelId: fallback.modelId, apiKey: null as string | null, substitution };
 }
 
 // Tool schema for every non-writer agent — just this agent's own step.
@@ -543,16 +603,21 @@ async function checkRateLimit(workspaceId: string) {
   return null;
 }
 
-// Real Anthropic per-model pricing, $ / million tokens (input, output).
-// Duplicated from spend.html's own copy (this repo's Edge Functions are
-// each self-contained, no shared imports) — keep both in sync if either
-// changes. Source: the current published Claude API price list.
-// Anything not in this table (shouldn't happen — this file only ever
-// calls one of these three) is priced at $0 rather than guessed.
+// Real per-model pricing, $ / million tokens (input, output). Claude
+// rows duplicated from spend.html's own copy (this repo's Edge
+// Functions are each self-contained, no shared imports) — keep all
+// three files in sync if any rate changes. gpt-4o/gemini-1.5-pro are
+// each provider's own current published rate, priced identically here
+// regardless of which workspace's own BYOK key made the call — the
+// cost is real either way, just billed to that workspace's own
+// provider account instead of Anthropic's. Anything not in this table
+// is priced at $0 rather than guessed.
 const REAL_PRICING: Record<string, { in: number; out: number }> = {
   "claude-sonnet-5": { in: 2.00, out: 10.00 },
   "claude-opus-4-8": { in: 5.00, out: 25.00 },
   "claude-haiku-4-5": { in: 1.00, out: 5.00 },
+  "gpt-4o": { in: 2.50, out: 10.00 },
+  "gemini-1.5-pro": { in: 1.25, out: 5.00 },
 };
 
 function realCost(model: string, inputTokens: number, outputTokens: number): number {
@@ -909,6 +974,132 @@ async function callAgent(opts: {
   return { input: toolUse.input, usage: data.usage, model: data.model as string };
 }
 
+// One real OpenAI call for one agent's turn — a workspace's own BYOK
+// key (migrations/0022), never this platform's own credential, since
+// it holds none. Same real forced-tool-call contract as callAgent
+// above, normalized to the identical { input, usage, model } shape so
+// nothing downstream (redaction, step-building, writer/gate handling)
+// needs to know which provider actually answered.
+async function callOpenAI(opts: {
+  apiKey: string;
+  agentName: string;
+  model: string;
+  system: string;
+  user: string;
+  tool: typeof STEP_TOOL | typeof FINAL_TOOL;
+  maxTokens: number;
+}) {
+  let resp: Response;
+  try {
+    resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${opts.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: opts.model,
+        max_tokens: opts.maxTokens,
+        messages: [
+          { role: "system", content: opts.system },
+          { role: "user", content: opts.user },
+        ],
+        tools: [{ type: "function", function: { name: opts.tool.name, description: opts.tool.description, parameters: opts.tool.input_schema } }],
+        tool_choice: { type: "function", function: { name: opts.tool.name } },
+      }),
+    });
+  } catch (err) {
+    throw new Error(`${opts.agentName}: failed to reach OpenAI API: ${String(err)}`);
+  }
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    console.error(`orchestrate: ${opts.agentName} OpenAI API error`, resp.status, text);
+    throw new Error(`${opts.agentName}: OpenAI API error (${resp.status}) — check that this workspace's OpenAI key (Workspace modal) is valid.`);
+  }
+
+  const data = await resp.json();
+  const choice = data.choices?.[0];
+  if (choice?.finish_reason === "length") {
+    throw new Error(`${opts.agentName}: response was cut off by the token limit. Try a shorter or more specific objective.`);
+  }
+  const toolCall = choice?.message?.tool_calls?.[0];
+  if (!toolCall) {
+    console.error(`orchestrate: ${opts.agentName} returned no tool_calls`, JSON.stringify(choice));
+    throw new Error(`${opts.agentName}: did not return a structured result.`);
+  }
+  let input: unknown;
+  try {
+    input = JSON.parse(toolCall.function.arguments);
+  } catch {
+    throw new Error(`${opts.agentName}: returned malformed structured output.`);
+  }
+
+  return {
+    input,
+    usage: { input_tokens: data.usage?.prompt_tokens || 0, output_tokens: data.usage?.completion_tokens || 0 },
+    model: (data.model as string) || opts.model,
+  };
+}
+
+// One real Google Gemini call for one agent's turn — same BYOK
+// discipline and normalized return shape as callOpenAI above. Gemini's
+// function-calling arguments arrive already parsed (a real object),
+// unlike OpenAI's JSON-string arguments — handled inline below rather
+// than needing a second parse.
+async function callGemini(opts: {
+  apiKey: string;
+  agentName: string;
+  model: string;
+  system: string;
+  user: string;
+  tool: typeof STEP_TOOL | typeof FINAL_TOOL;
+  maxTokens: number;
+}) {
+  let resp: Response;
+  try {
+    resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${opts.model}:generateContent?key=${opts.apiKey}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: opts.system }] },
+          contents: [{ role: "user", parts: [{ text: opts.user }] }],
+          tools: [{ function_declarations: [{ name: opts.tool.name, description: opts.tool.description, parameters: opts.tool.input_schema }] }],
+          tool_config: { function_calling_config: { mode: "ANY", allowed_function_names: [opts.tool.name] } },
+          generationConfig: { maxOutputTokens: opts.maxTokens },
+        }),
+      },
+    );
+  } catch (err) {
+    throw new Error(`${opts.agentName}: failed to reach Google Gemini API: ${String(err)}`);
+  }
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    console.error(`orchestrate: ${opts.agentName} Gemini API error`, resp.status, text);
+    throw new Error(`${opts.agentName}: Google Gemini API error (${resp.status}) — check that this workspace's Google key (Workspace modal) is valid.`);
+  }
+
+  const data = await resp.json();
+  const candidate = data.candidates?.[0];
+  if (candidate?.finishReason === "MAX_TOKENS") {
+    throw new Error(`${opts.agentName}: response was cut off by the token limit. Try a shorter or more specific objective.`);
+  }
+  const part = (candidate?.content?.parts || []).find((p: { functionCall?: unknown }) => p.functionCall);
+  if (!part?.functionCall) {
+    console.error(`orchestrate: ${opts.agentName} returned no functionCall`, JSON.stringify(candidate));
+    throw new Error(`${opts.agentName}: did not return a structured result.`);
+  }
+
+  return {
+    input: part.functionCall.args,
+    usage: { input_tokens: data.usageMetadata?.promptTokenCount || 0, output_tokens: data.usageMetadata?.candidatesTokenCount || 0 },
+    model: opts.model,
+  };
+}
+
 // Shared per-agent context, threaded through runOneAgent for both a
 // fresh run and a resumed one — so the two code paths can't drift.
 type RunCtx = {
@@ -937,6 +1128,11 @@ type RunCtx = {
   substitutions: Array<{ agentId: string; agentName: string; requested: string; used: string }>;
   redactions: Redaction[];
   promptInjectionFlags: InjectionFlag[];
+  // Per-request cache for resolveProviderKey (migrations/0022 BYOK) —
+  // a key value once looked up, or null once confirmed unconfigured, so
+  // a run never re-queries the same provider twice. Never persisted
+  // into run_state/orchestrate_runs; a resumed run re-resolves fresh.
+  providerKeyCache: Record<string, string | null>;
 };
 
 type AgentOutcome =
@@ -969,20 +1165,30 @@ async function runOneAgent(agent: PipelineAgent, ctx: RunCtx): Promise<AgentOutc
 
   const user = `${ctx.briefing}\n\n${priorContext}`;
 
+  // Auto-route (the risk/complexity cascade) always picks a Claude
+  // model by design — its three tiers are tuned around Sonnet 5/Opus
+  // 4.8 specifically, not a general multi-provider policy — so BYOK
+  // real routing only applies to the manual per-agent override path.
+  // A future pass could extend the cascade itself to consider a
+  // workspace's connected providers; out of scope for this one.
   const routed = ctx.autoRouteResult
-    ? { modelId: ctx.autoRouteResult.modelsBySlot[agent.slot], substitution: null as { agentId: string; agentName: string; requested: string; used: string } | null }
-    : resolveAgentModel(agent, ctx.agentModels[agent.id] ?? agent.declaredModel);
+    ? { provider: "anthropic" as const, modelId: ctx.autoRouteResult.modelsBySlot[agent.slot], apiKey: null as string | null, substitution: null as { agentId: string; agentName: string; requested: string; used: string } | null }
+    : await resolveAgentModel(ctx, agent, ctx.agentModels[agent.id] ?? agent.declaredModel);
   if (routed.substitution) ctx.substitutions.push(routed.substitution);
 
-  const result = await callAgent({
-    apiKey: ctx.apiKey,
+  const callOpts = {
     agentName: agent.name,
     model: routed.modelId,
     system,
     user,
     tool: isWriter ? FINAL_TOOL : STEP_TOOL,
     maxTokens: isWriter ? 4096 : 1024,
-  });
+  };
+  const result = routed.provider === "openai"
+    ? await callOpenAI({ ...callOpts, apiKey: routed.apiKey! })
+    : routed.provider === "google"
+    ? await callGemini({ ...callOpts, apiKey: routed.apiKey! })
+    : await callAgent({ ...callOpts, apiKey: ctx.apiKey });
 
   ctx.totalInputTokens += result.usage?.input_tokens || 0;
   ctx.totalOutputTokens += result.usage?.output_tokens || 0;
@@ -1128,6 +1334,11 @@ async function handleResume(workspaceId: string, userId: string, approvalId: str
     // Same reasoning: prompt-injection screening only ever runs once, at
     // objective intake in the main handler — carry forward what it found.
     promptInjectionFlags: Array.isArray(rs.promptInjectionFlags) ? rs.promptInjectionFlags.slice() : [],
+    // Not carried forward from run_state — a resume re-resolves fresh,
+    // so a key an admin configured (or removed) between pause and
+    // resume takes effect immediately, not a stale snapshot from pause
+    // time.
+    providerKeyCache: {},
   };
   // Snapshot so logRedactions below logs only what THIS resume newly
   // found, not the pre-pause counts again — those were already logged
@@ -1289,6 +1500,7 @@ Deno.serve(async (req: Request) => {
     substitutions: [],
     redactions: objectiveRedaction.redactions.slice(),
     promptInjectionFlags: injectionScreen.flags.slice(),
+    providerKeyCache: {},
   };
 
   try {

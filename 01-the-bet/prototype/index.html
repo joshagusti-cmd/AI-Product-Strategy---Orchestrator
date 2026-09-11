@@ -606,14 +606,15 @@
   var MODELS = ["Claude Sonnet 5", "Claude Opus 4.8", "GPT-4o", "Gemini 1.5 Pro"];
   // `model` here is real, live routing: on Orchestrate, each agent's
   // current model selection is sent to the Edge Function and used for
-  // that agent's actual Anthropic call (see
-  // supabase/functions/orchestrate/index.ts — resolveAgentModel).
-  // Reassigning an agent below changes which model really runs it on the
-  // next run, not just a label. Only "Claude Sonnet 5" and "Claude Opus
-  // 4.8" are real — no OpenAI/Google key is configured, so picking
-  // "GPT-4o" or "Gemini 1.5 Pro" falls back to that agent's Claude
-  // default and shows a toast naming the substitution after the run.
-  // True multi-provider support is still open — see feature-ideas.md.
+  // that agent's actual call (see supabase/functions/orchestrate/
+  // index.ts — resolveAgentModel/callOpenAI/callGemini). Reassigning an
+  // agent below changes which model really runs it on the next run, not
+  // just a label. "Claude Sonnet 5"/"Claude Opus 4.8" are always real.
+  // "GPT-4o"/"Gemini 1.5 Pro" are real too, for a workspace with its own
+  // OpenAI/Google key connected (Workspace modal → Provider Keys,
+  // migrations/0022, bring-your-own provider key) — otherwise picking
+  // either falls back to that agent's Claude default and shows a toast
+  // naming the substitution after the run.
   var AGENTS = [
     { id: "research", name: "Research & Data Agent", model: "Claude Sonnet 5", role: "Pulls and reconciles data across connected systems", x: 0.18, y: 0.28 },
     { id: "finance", name: "Finance Agent", model: "Claude Sonnet 5", role: "Analyzes cost structure, margin, and variance", x: 0.18, y: 0.74 },
