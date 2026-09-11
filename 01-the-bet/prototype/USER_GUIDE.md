@@ -133,6 +133,14 @@ Every new finding lands in the same queue as the historical ones, waiting on an 
 
 ---
 
+## Governance Snapshot (`governance-snapshot.html`)
+
+A single-document bundle of this workspace's real governance state — current policies, the approval record, and the audit trail — formatted for an actual auditor or customer security review, not a raw data dump like the Audit Trail's own JSON/CSV export. Pick a range (30/90/365 days or all time) to scope the Approval Record and Audit Trail sections; the Governance Policies table is always current state, since a policy is a live setting, not a historical event. Signed-in users also get a real plan/emergency-stop/retention/spend posture strip at the top — the shared public demo has no per-workspace settings to show there, so it's the one part of the report that's omitted for anonymous visitors.
+
+**Print / Save as PDF** opens your browser's real print dialog with the console chrome stripped out — a genuine document, not a screenshot. **Copy as Markdown** copies the same real content as plain text, for pasting into an email or doc, the same "copy to clipboard" export pattern the Audit Trail already uses.
+
+---
+
 ## Resetting demo data
 
 Every page has a **Reset demo data** link in the footer. It only resets the shared **public demo workspace** — your own signed-in workspace is never touched by it.

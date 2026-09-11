@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Governance Snapshot — Aiven Orchestrator</title>
+<meta name="description" content="A real, exportable governance bundle — policies, approvals, and the audit trail — formatted for an auditor or customer security review.">
+<link rel="stylesheet" href="assets/shared.css">
+<style>
+  .kpi-strip { grid-template-columns: repeat(4, 1fr); }
+  .filters { margin: 18px 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .filter-actions { display: flex; gap: 8px; }
+  .snapshot-head { border: 1px solid var(--border); background: var(--surface); padding: 20px; margin-top: 18px; }
+  .snapshot-head h2 { font-family: var(--mono); font-size: 15px; margin: 0 0 4px; }
+  .snapshot-head .meta { font-family: var(--mono); font-size: 11.5px; color: var(--text-mute); line-height: 1.8; }
+  .posture-row { display: flex; gap: 22px; flex-wrap: wrap; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-soft); }
+  .posture-item .label { font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-mute); }
+  .posture-item .val { font-size: 13px; margin-top: 2px; }
+  .snapshot-section { border: 1px solid var(--border); background: var(--surface); margin-top: 14px; }
+  .snapshot-section .panel-head { padding: 14px 18px; }
+  .snapshot-section .panel-body { padding: 0 18px 18px; }
+  .snapshot-section p.section-note { font-size: 11.5px; color: var(--text-mute); margin: 0 0 10px; }
+  td.detail-cell, td.escalation-cell { max-width: 40ch; color: var(--text-mute); font-size: 11.5px; }
+  @media (max-width: 980px) { .kpi-strip { grid-template-columns: repeat(2, 1fr); } }
+  /* Real print output — window.print() renders exactly this, chrome
+     stripped out, so "Print / Save as PDF" produces a genuine document,
+     not a screenshot of the console UI. */
+  @media print {
+    .topbar, .subnav, .page-head, .filters, .foot, .toast-wrap, .theme-toggle { display: none !important; }
+    body, .shell { background: #fff !important; color: #111 !important; }
+    .snapshot-head, .snapshot-section { border-color: #ccc !important; background: #fff !important; break-inside: avoid; }
+    table.data { color: #111 !important; }
+    a { color: #111 !important; text-decoration: none !important; }
+  }
+</style>
+</head>
+<body data-page="snapshot">
+<script>document.documentElement.setAttribute("data-theme", "dark");</script>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="index.html">
+      <div class="brand-mark"></div>
+      <div class="brand-text"><span class="name">AIVEN ORCHESTRATOR</span><span class="sub">Agent governance console</span></div>
+    </a>
+    <div class="model-rail">
+      <div class="model-chip"><span class="dot"></span>Anthropic</div>
+      <div class="model-chip"><span class="dot"></span>OpenAI</div>
+      <div class="model-chip"><span class="dot"></span>Google</div>
+      <div class="status-live"><span class="dot"></span>LIVE</div>
+      <div class="auth-widget" id="auth-widget"></div>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle color theme">MODE</button>
+    </div>
+  </div>
+</div>
+<div class="subnav">
+  <div class="subnav-inner">
+    <a href="index.html" data-page="command">Command Center</a>
+    <a href="agents.html" data-page="agents">Agent Registry</a>
+    <a href="policies.html" data-page="policies">Policies</a>
+    <a href="approvals.html" data-page="approvals">Approval Queue</a>
+    <a href="audit.html" data-page="audit">Audit Trail</a>
+    <a href="workflow-history.html" data-page="history">Workflow History</a>
+    <a href="spend.html" data-page="spend">Model Spend</a>
+    <a href="shadow-ai.html" data-page="shadow">Shadow AI Audit</a>
+    <a href="governance-snapshot.html" data-page="snapshot">Governance Snapshot</a>
+  </div>
+</div>
+
+<div class="shell">
+  <div class="page-head">
+    <h1>&gt; Governance Snapshot</h1>
+    <p>A real, single-document bundle of this workspace's governance state — current policies, the approval record, and the audit trail for the range below — formatted for an actual auditor or customer security review. Distinct from the Audit Trail's own JSON/CSV export: this is a report, not a raw data dump, over data that already exists elsewhere in this console.</p>
+  </div>
+
+  <section class="kpi-strip" aria-label="Governance snapshot metrics">
+    <div class="kpi"><div class="eyebrow">Policies</div><div class="val tabular" id="kpi-policies">—</div><div class="delta">current state</div></div>
+    <div class="kpi"><div class="eyebrow">Approvals in range</div><div class="val tabular" id="kpi-approvals">—</div><div class="delta">pending + decided</div></div>
+    <div class="kpi"><div class="eyebrow">Audit entries in range</div><div class="val tabular" id="kpi-audit">—</div><div class="delta">of what's archived</div></div>
+    <div class="kpi"><div class="eyebrow">High-risk approvals</div><div class="val tabular" id="kpi-highrisk">—</div><div class="delta warn">in range</div></div>
+  </section>
+
+  <div class="filters">
+    <div class="chip-row" id="range-filter"></div>
+    <div class="filter-actions">
+      <button class="btn small" id="copy-markdown" type="button">Copy as Markdown</button>
+      <button class="btn small primary" id="print-snapshot" type="button">Print / Save as PDF</button>
+    </div>
+  </div>
+
+  <div id="snapshot-report">
+    <div class="snapshot-head" id="report-head"></div>
+
+    <div class="snapshot-section">
+      <div class="panel-head"><div><h2>Governance Policies</h2><div class="hint">Current state — not date-ranged, since a policy is a live setting, not a historical event.</div></div></div>
+      <div class="panel-body tight scroll-x">
+        <table class="data" id="policies-table">
+          <thead><tr><th>Tier</th><th>Label</th><th>Autonomy</th><th>Risk threshold</th><th>Escalation</th><th>Last updated</th></tr></thead>
+          <tbody id="policies-rows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="snapshot-section">
+      <div class="panel-head"><div><h2>Approval Record</h2><div class="hint" id="approvals-hint"></div></div></div>
+      <div class="panel-body tight scroll-x">
+        <table class="data" id="approvals-table">
+          <thead><tr><th>Requested</th><th>Title</th><th>Agent</th><th>Dept</th><th>Risk</th><th>Status</th></tr></thead>
+          <tbody id="approvals-rows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="snapshot-section">
+      <div class="panel-head"><div><h2>Audit Trail</h2><div class="hint" id="audit-hint"></div></div></div>
+      <div class="panel-body tight scroll-x">
+        <table class="data" id="audit-table">
+          <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Risk</th><th>Detail</th></tr></thead>
+          <tbody id="audit-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <span>Aiven Consulting Group — prototype build, simulated data · <button class="reset-link" id="reset-demo" type="button">Reset demo data</button></span>
+    <span id="clock" class="tabular"></span>
+  </footer>
+</div>
+
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="assets/data.js"></script>
+<script>
+(function () {
+  "use strict";
+  Aiven.initChrome();
+
+  var RANGES = [
+    { key: "30", label: "Last 30 days", days: 30 },
+    { key: "90", label: "Last 90 days", days: 90 },
+    { key: "365", label: "Last 365 days", days: 365 },
+    { key: "all", label: "All time", days: null }
+  ];
+  var activeRange = "90";
+  var state = { policies: [], approvals: [], auditLog: [] };
+  var usage = null;
+
+  function escapeHtml(s) { return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+  function rangeDays() { return RANGES.find(function (r) { return r.key === activeRange; }).days; }
+  function withinRange(iso) {
+    var days = rangeDays();
+    if (days === null) return true;
+    if (!iso) return false;
+    return new Date(iso).getTime() >= Date.now() - days * 24 * 60 * 60 * 1000;
+  }
+
+  function renderRangeFilter() {
+    var wrap = document.getElementById("range-filter");
+    wrap.innerHTML = "";
+    RANGES.forEach(function (r) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "chip" + (r.key === activeRange ? " on" : "");
+      b.textContent = r.label;
+      b.addEventListener("click", function () { activeRange = r.key; renderRangeFilter(); renderAll(); });
+      wrap.appendChild(b);
+    });
+  }
+
+  function renderReportHead() {
+    var el = document.getElementById("report-head");
+    var user = Aiven.auth.getUser();
+    var rangeLabel = RANGES.find(function (r) { return r.key === activeRange; }).label;
+    // Policies/approvals/audit trail are real for the shared, read-only
+    // public demo too (they're real seeded Postgres rows anyone can
+    // view) — only the plan/spend/retention posture strip is a real
+    // per-workspace *setting*, meaningless for the shared demo, so it's
+    // the only thing gated on a real signed-in usage() result.
+    var postureHtml = usage
+      ? "<div class='posture-row'>" +
+        "<div class='posture-item'><div class='label'>Plan</div><div class='val'>" + escapeHtml((usage.plan || "free").charAt(0).toUpperCase() + (usage.plan || "free").slice(1)) + "</div></div>" +
+        "<div class='posture-item'><div class='label'>Emergency stop</div><div class='val'>" + (usage.emergencyStop ? "⛔ Active" : "Not active") + "</div></div>" +
+        "<div class='posture-item'><div class='label'>Data retention</div><div class='val'>" + (usage.retentionDays ? usage.retentionDays + " days" : "Not set") + "</div></div>" +
+        "<div class='posture-item'><div class='label'>Spend today</div><div class='val'>$" + usage.spendUsedUsd.toFixed(2) + " / $" + usage.spendCapUsd.toFixed(2) + "</div></div>" +
+        "</div>"
+      : "<p class='hint' style='margin-top:10px;'>Sign in for real plan/spend/retention posture — the read-only public demo has no per-workspace settings to show here.</p>";
+    el.innerHTML =
+      "<h2>Governance Snapshot</h2>" +
+      "<div class='meta'>Generated " + new Date().toLocaleString() + (user ? " by " + escapeHtml(user.email) : "") + "<br>Range: " + rangeLabel + "</div>" +
+      postureHtml;
+  }
+
+  function renderPolicies() {
+    document.getElementById("kpi-policies").textContent = state.policies.length;
+    document.getElementById("policies-rows").innerHTML = state.policies.map(function (p) {
+      return "<tr><td><span class='tier-pill " + p.tier + "'>" + p.tier + "</span></td><td class='name'>" + escapeHtml(p.label) + "</td>" +
+        "<td>" + escapeHtml(p.autonomy) + "</td><td class='tabular'>" + p.riskThreshold + "</td>" +
+        "<td class='escalation-cell'>" + escapeHtml(p.escalation) + "</td><td class='mono'>" + (p.updatedAt || "—") + "</td></tr>";
+    }).join("") || "<tr><td colspan='6'><div class='empty-state'>No policies defined.</div></td></tr>";
+  }
+
+  function renderApprovals() {
+    var inRange = state.approvals.filter(function (a) { return withinRange(a.requestedAt); });
+    document.getElementById("kpi-approvals").textContent = inRange.length;
+    document.getElementById("kpi-highrisk").textContent = inRange.filter(function (a) { return a.risk === "High"; }).length;
+    document.getElementById("approvals-hint").textContent =
+      inRange.length + " of " + state.approvals.length + " total approval(s) fall in the selected range, newest first.";
+    document.getElementById("approvals-rows").innerHTML = inRange
+      .slice()
+      .sort(function (a, b) { return new Date(b.requestedAt) - new Date(a.requestedAt); })
+      .map(function (a) {
+        var statusLabel = a.status === "pending" ? "Pending" : a.status === "approved" ? "✓ Approved" : "✕ Rejected";
+        return "<tr><td class='mono'>" + (a.requestedAt ? new Date(a.requestedAt).toLocaleDateString() : "—") + "</td>" +
+          "<td class='name'>" + escapeHtml(a.title) + "</td><td>" + escapeHtml(a.agent) + "</td><td>" + escapeHtml(a.dept) + "</td>" +
+          "<td><span class='risk-pill " + a.risk + "'>" + a.risk + "</span></td><td>" + statusLabel + "</td></tr>";
+      }).join("") || "<tr><td colspan='6'><div class='empty-state'>No approvals in this range.</div></td></tr>";
+  }
+
+  function renderAudit() {
+    // loadState() itself already caps audit_log at the 300 most recent
+    // real rows for this workspace — the same real cap the Audit Trail
+    // page works from. A range filter narrows within that real window;
+    // it can't surface rows older than what was actually fetched, and
+    // this hint says so honestly rather than implying a complete history.
+    var inRange = state.auditLog.filter(function (e) { return withinRange(e.ts); });
+    document.getElementById("kpi-audit").textContent = inRange.length;
+    document.getElementById("audit-hint").textContent =
+      inRange.length + " entries in range, out of the " + state.auditLog.length + " most recent real audit_log rows loaded for this workspace.";
+    document.getElementById("audit-rows").innerHTML = inRange.map(function (e) {
+      return "<tr><td class='mono' title=\"" + new Date(e.ts).toLocaleString() + "\">" + Aiven.timeAgo(e.ts) + "</td>" +
+        "<td>" + escapeHtml(e.actor) + "</td><td>" + escapeHtml(e.action) + "</td>" +
+        "<td>" + (e.risk ? "<span class='risk-pill " + e.risk + "'>" + e.risk + "</span>" : "—") + "</td>" +
+        "<td class='detail-cell'>" + escapeHtml(e.detail) + "</td></tr>";
+    }).join("") || "<tr><td colspan='5'><div class='empty-state'>No audit entries in this range.</div></td></tr>";
+  }
+
+  function renderAll() {
+    renderReportHead();
+    renderPolicies();
+    renderApprovals();
+    renderAudit();
+  }
+
+  function buildMarkdown() {
+    var lines = [];
+    lines.push("# Governance Snapshot");
+    lines.push("");
+    lines.push("Generated " + new Date().toLocaleString() + (Aiven.auth.getUser() ? " by " + Aiven.auth.getUser().email : "") + " — range: " + RANGES.find(function (r) { return r.key === activeRange; }).label);
+    if (usage) {
+      lines.push("Plan: " + usage.plan + " · Emergency stop: " + (usage.emergencyStop ? "active" : "not active") +
+        " · Data retention: " + (usage.retentionDays ? usage.retentionDays + " days" : "not set") +
+        " · Spend today: $" + usage.spendUsedUsd.toFixed(2) + " / $" + usage.spendCapUsd.toFixed(2));
+    }
+    lines.push("");
+    lines.push("## Governance Policies");
+    state.policies.forEach(function (p) {
+      lines.push("- **" + p.label + "** (" + p.tier + ") — " + p.autonomy + ", risk threshold " + p.riskThreshold + ". " + p.escalation);
+    });
+    lines.push("");
+    lines.push("## Approval Record");
+    var approvalsInRange = state.approvals.filter(function (a) { return withinRange(a.requestedAt); });
+    approvalsInRange.forEach(function (a) {
+      lines.push("- [" + (a.status === "pending" ? "PENDING" : a.status.toUpperCase()) + "] " + a.title + " — " + a.agent + " / " + a.dept + " (" + a.risk + " risk), requested " + (a.requestedAt ? new Date(a.requestedAt).toLocaleDateString() : "—"));
+    });
+    if (!approvalsInRange.length) lines.push("_None in range._");
+    lines.push("");
+    lines.push("## Audit Trail");
+    var auditInRange = state.auditLog.filter(function (e) { return withinRange(e.ts); });
+    auditInRange.forEach(function (e) {
+      lines.push("- " + new Date(e.ts).toLocaleString() + " — " + e.actor + ": " + e.action + (e.risk ? " (" + e.risk + ")" : "") + (e.detail ? " — " + e.detail : ""));
+    });
+    if (!auditInRange.length) lines.push("_None in range._");
+    return lines.join("\n");
+  }
+
+  document.getElementById("copy-markdown").addEventListener("click", function () {
+    navigator.clipboard.writeText(buildMarkdown()).then(
+      function () { Aiven.toast("Governance snapshot copied as Markdown."); },
+      function () { Aiven.toast("Couldn't copy — your browser blocked clipboard access."); }
+    );
+  });
+  document.getElementById("print-snapshot").addEventListener("click", function () {
+    print();
+  });
+
+  Aiven.loadState().then(function (s) {
+    state = s;
+    return Aiven.getUsage();
+  }).then(function (u) {
+    usage = u;
+    renderRangeFilter();
+    renderAll();
+  }).catch(function (e) {
+    Aiven.toast("Couldn't load the governance snapshot: " + e.message);
+  });
+})();
+</script>
+</body>
+</html>
