@@ -521,7 +521,7 @@
     await ready;
     if (currentWorkspaceId === DEMO_WORKSPACE_ID) return null;
     var wsRes = await sb.from("workspaces")
-      .select("daily_orchestrate_limit, plan, emergency_stop, emergency_stop_at, emergency_stop_by_email, daily_spend_cap_usd")
+      .select("daily_orchestrate_limit, plan, emergency_stop, emergency_stop_at, emergency_stop_by_email, daily_spend_cap_usd, audit_retention_days")
       .eq("id", currentWorkspaceId).maybeSingle();
     if (wsRes.error) throw wsRes.error;
     var limit = (wsRes.data && wsRes.data.daily_orchestrate_limit) || 20;
@@ -542,7 +542,8 @@
       spendUsedUsd: spendUsedUsd, spendCapUsd: spendCapUsd,
       emergencyStop: !!(wsRes.data && wsRes.data.emergency_stop),
       emergencyStopAt: (wsRes.data && wsRes.data.emergency_stop_at) || null,
-      emergencyStopByEmail: (wsRes.data && wsRes.data.emergency_stop_by_email) || null
+      emergencyStopByEmail: (wsRes.data && wsRes.data.emergency_stop_by_email) || null,
+      retentionDays: (wsRes.data && wsRes.data.audit_retention_days) || null
     };
   }
 
@@ -710,6 +711,34 @@
     requireOwnWorkspace();
     var r = await sb.rpc("set_emergency_stop", { ws: currentWorkspaceId, active: !!active });
     if (r.error) throw r.error;
+  }
+
+  // Admin-only RPC (migrations/0021) — same "workspaces has no
+  // client-facing UPDATE policy, this RPC is the sole write path"
+  // pattern as setEmergencyStop/setPlan above. `days` null means no
+  // automatic deletion (the default); otherwise real audit_log and
+  // orchestrate_runs rows older than that many days get deleted for
+  // real, both by a real daily pg_cron job and by runDataRetentionNow
+  // below.
+  async function setDataRetention(days) {
+    requireOwnWorkspace();
+    var r = await sb.rpc("set_data_retention", { ws: currentWorkspaceId, days: days });
+    if (r.error) throw r.error;
+  }
+
+  // Admin-only RPC (migrations/0021) — real, immediate deletion of this
+  // workspace's own expired rows, using the identical delete path the
+  // scheduled daily job uses, so a demo (or an actual admin) gets real
+  // proof retention is enforced instead of a leap of faith about
+  // whether the background cron job is actually configured or running.
+  // Requires a retention window to already be set — throws a real error
+  // otherwise. Returns { auditDeleted, runsDeleted } for a real toast.
+  async function runDataRetentionNow() {
+    requireOwnWorkspace();
+    var r = await sb.rpc("run_data_retention_now", { ws: currentWorkspaceId });
+    if (r.error) throw r.error;
+    var row = Array.isArray(r.data) ? r.data[0] : r.data;
+    return { auditDeleted: (row && row.audit_deleted) || 0, runsDeleted: (row && row.runs_deleted) || 0 };
   }
 
   // Workspace-configured webhook notifications (migrations/0020) — real,
@@ -884,6 +913,42 @@
       "</div>";
   }
 
+  // A real, workspace-configurable auto-delete window (migrations/0021)
+  // for audit_log and orchestrate_runs — a common real enterprise
+  // procurement ask (GDPR data-minimization), not yet extended to any
+  // other telemetry table. Unset (the default) means no automatic
+  // deletion, matching every workspace's real behavior before this
+  // existed. Enforced two real ways: a daily pg_cron job, and (for an
+  // admin who wants real, immediate proof instead of trusting a
+  // background job) the "Run retention now" button below.
+  var RETENTION_OPTIONS = [
+    { value: "", label: "No automatic deletion" },
+    { value: "30", label: "30 days" },
+    { value: "90", label: "90 days" },
+    { value: "180", label: "180 days" },
+    { value: "365", label: "365 days" }
+  ];
+  function renderRetentionSection(usage, amAdmin) {
+    if (!usage) return "";
+    var days = usage.retentionDays;
+    var statusHtml = days
+      ? "<p class='hint'>Active — Audit Trail and Workflow History rows older than " + days + " days are deleted automatically, once a day.</p>"
+      : "<p class='hint'>Not set — no automatic deletion. A common GDPR/data-minimization ask; set a window below to enable it.</p>";
+    var selectedValue = days ? String(days) : "";
+    var formHtml = amAdmin
+      ? "<div class='team-invite-form'>" +
+        "<select class='control' id='aiven-retention-select'>" +
+        RETENTION_OPTIONS.map(function (o) { return "<option value='" + o.value + "'" + (o.value === selectedValue ? " selected" : "") + ">" + o.label + "</option>"; }).join("") +
+        "</select>" +
+        "<button class='btn small' id='aiven-retention-save-btn' type='button'>Save</button>" +
+        (days ? "<button class='btn small ghost' id='aiven-retention-run-btn' type='button'>Run retention now</button>" : "") +
+        "</div>"
+      : "";
+    return "<div class='team-section'><h4>Data Retention</h4>" + statusHtml + formHtml +
+      "<p class='hint'>Deletes real rows for good, not just hides them — scoped to Audit Trail and Workflow History; not yet extended to spend telemetry or the audit trail Q&A log.</p>" +
+      "</div>";
+  }
+
   function renderTeamBody(body, team, myRole, usage, webhookConfig, deliveries) {
     var amAdmin = myRole === "admin";
     var membersHtml = team.members.map(function (m) {
@@ -918,6 +983,7 @@
       renderEmergencyStopSection(usage, amAdmin) +
       renderPlanSection(usage, amAdmin) +
       (usage ? renderWebhookSection(webhookConfig, deliveries, amAdmin) : "") +
+      renderRetentionSection(usage, amAdmin) +
       "<div class='team-section'><h4>Members</h4>" + membersHtml + "</div>" +
       "<div class='team-section'><h4>Pending invites</h4>" + invitesHtml + "</div>" +
       inviteFormHtml;
@@ -981,6 +1047,39 @@
         } catch (e) {
           toast("Failed to change webhook: " + e.message);
           webhookToggleBtn.disabled = false;
+        }
+      });
+    }
+
+    var retentionSaveBtn = body.querySelector("#aiven-retention-save-btn");
+    if (retentionSaveBtn) {
+      retentionSaveBtn.addEventListener("click", async function () {
+        var select = body.querySelector("#aiven-retention-select");
+        var raw = select.value;
+        var days = raw ? parseInt(raw, 10) : null;
+        retentionSaveBtn.disabled = true;
+        try {
+          await setDataRetention(days);
+          toast(days ? "Retention window set to " + days + " days." : "Automatic deletion disabled.");
+          await refresh();
+        } catch (e) {
+          toast("Failed to save retention window: " + e.message);
+          retentionSaveBtn.disabled = false;
+        }
+      });
+    }
+    var retentionRunBtn = body.querySelector("#aiven-retention-run-btn");
+    if (retentionRunBtn) {
+      retentionRunBtn.addEventListener("click", async function () {
+        if (!global.confirm("Delete every real Audit Trail and Workflow History row older than " + usage.retentionDays + " days, right now? This can't be undone.")) return;
+        retentionRunBtn.disabled = true;
+        try {
+          var result = await runDataRetentionNow();
+          toast("Deleted " + result.auditDeleted + " audit log row(s) and " + result.runsDeleted + " archived run(s).");
+          await refresh();
+        } catch (e) {
+          toast("Failed to run retention: " + e.message);
+          retentionRunBtn.disabled = false;
         }
       });
     }
@@ -1220,6 +1319,8 @@
     touchTemplateUsed: touchTemplateUsed,
     setPlan: setPlan,
     setEmergencyStop: setEmergencyStop,
+    setDataRetention: setDataRetention,
+    runDataRetentionNow: runDataRetentionNow,
     getWebhookConfig: getWebhookConfig,
     setWebhookConfig: setWebhookConfig,
     getWebhookDeliveries: getWebhookDeliveries,
