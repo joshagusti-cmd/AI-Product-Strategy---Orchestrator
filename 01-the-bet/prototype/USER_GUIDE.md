@@ -103,6 +103,8 @@ A real-time, searchable log of every agent and human action — approving someth
 
 A real, searchable archive of every completed Orchestrate run's full deliverable — not just the Audit Trail's one-line pointer to it. Search past objectives or filter by department (built from the real department scope each run actually used), then click a row to expand its executive summary, findings, recommendations, risk flags, and every agent's individual step, exactly as it looked when the run finished. Runs that paused for a policy approval and were later resumed are marked so.
 
+**Full prompt visibility.** Each agent step now has a **View prompt** toggle showing the exact system and user prompt that agent's real Claude call actually received — the real inputs behind its response, not just the response itself. Runs archived before this shipped simply have no toggle (an honest gap, not a backfilled guess).
+
 **Comparing two runs.** Check the box on any two rows (checking a third does nothing until you uncheck one) and click **Compare selected** to see both full deliverables side by side — objective, scope, model, executive summary, findings, recommendations, risk flags, every agent step. It's a real juxtaposition of two real archived runs, not a computed diff — nothing is highlighted as "changed," you're just looking at both in full at once. Click **← Back to archive** to return to the list.
 
 ---
