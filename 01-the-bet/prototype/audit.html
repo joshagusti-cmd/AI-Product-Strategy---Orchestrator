@@ -75,6 +75,10 @@
   </div>
 
   <div class="filters">
+    <div class="filter-row"><span class="filter-label">Department</span><div class="chip-row" id="dept-filter"></div></div>
+  </div>
+
+  <div class="filters">
     <input class="control search-box" id="search" type="search" placeholder="Search actor, action, or detail…">
     <div class="export-actions">
       <button class="btn small" id="export-json" type="button">Copy as JSON</button>
@@ -106,8 +110,9 @@
 (function () {
   "use strict";
   Aiven.initChrome();
-  var state = { auditLog: [] };
+  var state = { auditLog: [], agents: [] };
   var query = "";
+  var activeDept = "All";
   var qaHistory = null;      // null = demo/anonymous, else array of past Q&A
   var qaAsking = false;
   var qaPendingQuestion = "";
@@ -175,7 +180,38 @@
     document.getElementById("kpi-actors").textContent = Object.keys(actors).length;
   }
 
+  // Real per-department drill-down: audit_log itself has no department
+  // column (an entry is one actor's action, not scoped to a team), so
+  // this attributes an entry to a department by matching its real actor
+  // text against a real agent's name in the registry — the same agents
+  // Agent Registry/Approval Queue/Workflow History already filter by
+  // department on. Some real actors ("Human reviewer", "Orchestrator
+  // Core", "Kill-switch drill") aren't a registered agent at all — those
+  // stay real, they just aren't attributable to one department, so they
+  // only ever show up under "All", never invented into a department they
+  // weren't actually part of.
+  function actorDept(actor) {
+    var agent = state.agents.find(function (a) { return a.name === actor; });
+    return agent ? agent.dept : null;
+  }
+
+  function renderDeptFilter() {
+    var depts = [];
+    state.agents.forEach(function (a) { if (depts.indexOf(a.dept) === -1) depts.push(a.dept); });
+    var wrap = document.getElementById("dept-filter");
+    wrap.innerHTML = "";
+    ["All"].concat(depts).forEach(function (d) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "chip" + (d === activeDept ? " on" : "");
+      b.textContent = d;
+      b.addEventListener("click", function () { activeDept = d; renderDeptFilter(); renderTable(); });
+      wrap.appendChild(b);
+    });
+  }
+
   function matches(e) {
+    if (activeDept !== "All" && actorDept(e.actor) !== activeDept) return false;
     if (!query) return true;
     var q = query.toLowerCase();
     return (e.actor + " " + e.action + " " + (e.detail || "")).toLowerCase().indexOf(q) !== -1;
@@ -219,6 +255,7 @@
   Aiven.loadState().then(function (s) {
     state = s;
     renderKpis();
+    renderDeptFilter();
     renderTable();
   }).catch(function (e) {
     Aiven.toast("Couldn't load the Audit Trail: " + e.message);

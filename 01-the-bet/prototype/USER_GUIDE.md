@@ -99,6 +99,8 @@ The org-wide backlog of everything waiting on a human — filterable by risk and
 
 A real-time, searchable log of every agent and human action — approving something, saving a policy, orchestrating a run, all land here immediately. Export the current view as JSON or CSV.
 
+**Filter by department.** The department chips above the log are built from your workspace's own real agent roster, same as Agent Registry, Approval Queue, and Workflow History. An entry is attributed to a department by matching its real actor text against a real agent's name — an entry from "Human reviewer," "Orchestrator Core," or a kill-switch drill isn't a registered agent at all, so it stays real but only shows up under "All," never guessed into a department it wasn't actually part of.
+
 **Ask the audit trail.** Type a question in plain language — "why did the Risk & Compliance Agent flag something last week?" — and a real Claude call answers it, grounded strictly in your workspace's own real log entries (the 300 most recent). If the log doesn't actually support an answer, it says so plainly rather than making one up. Every question and answer is saved, so your history is still there next time you visit. This is rate-limited separately from Orchestrate — 40 questions per rolling 24 hours per workspace.
 
 ---
