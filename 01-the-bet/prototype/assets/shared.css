@@ -110,6 +110,12 @@ button, select, input, textarea { font-family: inherit; }
   padding: 5px 10px; border: 1px solid var(--border-soft); background: var(--surface);
 }
 .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); box-shadow: 0 0 5px var(--success); flex-shrink: 0; }
+/* Real vendor-portability signal, not decoration — a BYOK provider chip
+   (assets/data.js renderProviderRail) starts dim until this workspace has
+   actually connected its own key; Anthropic never gets this class, since
+   it's always real. */
+.model-chip.dim { color: var(--text-mute); }
+.model-chip.dim .dot { background: var(--text-mute); box-shadow: none; }
 .theme-toggle {
   border: 1px solid var(--border-soft); background: var(--surface); color: var(--text-dim);
   padding: 6px 11px; font-family: var(--mono); font-size: 11px; cursor: pointer;

@@ -31,6 +31,8 @@ Controls you can't use for your role are disabled in the UI, and the same restri
 
 **Provider Keys (bring your own OpenAI/Google key).** The Workspace modal also has a Provider Keys section: an admin can paste in this workspace's own real OpenAI or Google API key, encrypted at rest and never shown again once saved (only its last 4 characters, so you can tell which key is connected). The moment a key is saved, that provider becomes real for this workspace — picking "GPT-4o" or "Gemini 1.5 Pro" (Command Center or Agent Registry) genuinely calls that provider instead of silently falling back to Claude, and the Shadow AI Audit stops flagging it as drift. Aiven itself holds no platform-wide OpenAI/Google credential — this is real routing exactly for the workspaces that bring their own key, nothing shared across customers. **Remove** deletes the underlying encrypted key for good; that provider's agents fall back to Claude again, same as before it was connected.
 
+**Vendor portability, in the top bar itself.** The Anthropic/OpenAI/Google chips next to the logo on every page aren't decoration — they reflect this signed-in workspace's own real Provider Keys status. Anthropic is always lit (Aiven's own key, no setup); OpenAI/Google light up the moment this workspace connects its own key above, and dim again if it's removed. Hover a chip for the real reason behind its state. It's the same not-locked-to-one-vendor story the pitch makes (`02-the-moat/kill-switch.md`), made visible in the product itself rather than left to a slide.
+
 ---
 
 ## Command Center (`index.html`)
