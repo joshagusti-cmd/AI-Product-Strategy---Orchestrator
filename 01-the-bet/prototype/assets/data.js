@@ -1397,6 +1397,45 @@
     }
 
     mountAuthWidget("auth-widget");
+    renderProviderRail();
+    authListeners.push(function () { renderProviderRail(); });
+  }
+
+  // Real vendor-portability messaging, in the product itself rather than
+  // only in the pitch deck (feature-ideas.md's own open question) — the
+  // topbar's Anthropic/OpenAI/Google chips used to be static decoration,
+  // implying every provider was equally live for everyone. Now the dot
+  // reflects this actual signed-in workspace's real BYOK connection
+  // status (migrations/0022, getProviderKeys()): Claude is always real,
+  // Aiven's own key; OpenAI/Google light up only once this workspace has
+  // really connected its own key, and a tooltip says so either way — a
+  // real fact about this workspace, not a claim about the platform.
+  function renderProviderRail() {
+    var rail = document.getElementById("model-rail");
+    if (!rail) return;
+    getProviderKeys().then(function (providerKeys) {
+      var connected = {};
+      (providerKeys || []).forEach(function (p) { connected[p.provider] = p.key_suffix; });
+      rail.querySelectorAll(".model-chip[data-provider]").forEach(function (chip) {
+        var provider = chip.getAttribute("data-provider");
+        if (provider === "anthropic") {
+          chip.title = "Anthropic — always real, Aiven's own key. Every workspace can call Claude with no setup.";
+          return;
+        }
+        var label = provider === "openai" ? "OpenAI" : "Google";
+        if (providerKeys === null) {
+          // Shared public demo — no per-workspace connection to show.
+          chip.classList.add("dim");
+          chip.title = label + " — real for a workspace that connects its own key (Workspace panel → Provider Keys). Sign in to see this workspace's real status.";
+        } else if (connected[provider]) {
+          chip.classList.remove("dim");
+          chip.title = label + " — connected. Real calls route here (key ending " + connected[provider] + ").";
+        } else {
+          chip.classList.add("dim");
+          chip.title = label + " — not connected yet. Connect your own key in Workspace panel → Provider Keys for real routing; until then, picking this model falls back to Claude.";
+        }
+      });
+    }).catch(function (e) { console.error("Aiven: couldn't load provider rail status", e); });
   }
 
   global.Aiven = {

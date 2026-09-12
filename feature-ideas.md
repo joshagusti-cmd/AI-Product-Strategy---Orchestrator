@@ -26,7 +26,7 @@ Running list of ideas surfaced while building the prototype that are out of scop
 - Integrations catalog for the data sources currently just listed as chips (NetSuite, Salesforce, Zendesk, Snowflake, Workday)
 
 ## Positioning to test with buyers
-- Whether "kill switch" / vendor-portability messaging (see `02-the-moat/kill-switch.md`) belongs in the product UI itself, not just the pitch
+- ~~Whether "kill switch" / vendor-portability messaging (see `02-the-moat/kill-switch.md`) belongs in the product UI itself, not just the pitch~~ — **answered, and built**: yes. The Anthropic/OpenAI/Google chips in every page's top bar now reflect this signed-in workspace's own real Provider Keys connection status (`Aiven.initChrome()`'s `renderProviderRail()`) instead of sitting there as static decoration — a real, hover-to-explain fact about this workspace's actual vendor lock-in (or lack of it), not a pitch-deck claim. No new schema or endpoint — reads `getProviderKeys()`, already built for bring-your-own provider key.
 - Whether pricing should be seat-based, usage-based, or outcome-based once real usage data exists (see `03-the-margin/cost-curve.md`)
 
 ## Competitive differentiation — what the 2026 market actually rewards
