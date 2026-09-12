@@ -492,15 +492,18 @@
     return body; // { result, model, usage, substitutions, routing, resumedApprovalId }
   }
 
-  // Real Anthropic per-model pricing, $ / million tokens (input, output)
-  // — duplicated from spend.html's own copy (and orchestrate/index.ts's
-  // server-side copy that actually enforces the cap) so this real-time
-  // display never needs an extra Edge Function round trip. Keep all
-  // three in sync if pricing changes.
+  // Real per-model pricing, $ / million tokens (input, output) — every
+  // provider a workspace can reach (built-in Claude, plus BYOK OpenAI/
+  // Gemini, migrations/0022). Duplicated from spend.html's own copy (and
+  // orchestrate/index.ts's server-side copy that actually enforces the
+  // cap) so this real-time display never needs an extra Edge Function
+  // round trip. Keep all three in sync if pricing changes.
   var REAL_PRICING = {
     "claude-sonnet-5": { in: 2.00, out: 10.00 },
     "claude-opus-4-8": { in: 5.00, out: 25.00 },
-    "claude-haiku-4-5": { in: 1.00, out: 5.00 }
+    "claude-haiku-4-5": { in: 1.00, out: 5.00 },
+    "gpt-4o": { in: 2.50, out: 10.00 },
+    "gemini-1.5-pro": { in: 1.25, out: 5.00 }
   };
   function realCallCost(model, inputTokens, outputTokens) {
     var p = REAL_PRICING[model] || { in: 0, out: 0 };

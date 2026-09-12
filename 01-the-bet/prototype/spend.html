@@ -182,14 +182,17 @@
     }).join("");
   }
 
-  // Real Anthropic per-model pricing, $ / million tokens (input, output).
-  // Source: the current published Claude API price list. Anything not
-  // in this table (shouldn't happen — the Edge Function only ever calls
-  // one of these three) is priced at $0 rather than guessed.
+  // Real per-model pricing, $ / million tokens (input, output). Source:
+  // each provider's current published price list. Must stay in sync with
+  // the same table in assets/data.js and supabase/functions/orchestrate
+  // (BYOK, migrations/0022) — anything not in this table is priced at $0
+  // rather than guessed.
   var REAL_PRICING = {
     "claude-sonnet-5": { in: 2.00, out: 10.00 },
     "claude-opus-4-8": { in: 5.00, out: 25.00 },
-    "claude-haiku-4-5": { in: 1.00, out: 5.00 }
+    "claude-haiku-4-5": { in: 1.00, out: 5.00 },
+    "gpt-4o": { in: 2.50, out: 10.00 },
+    "gemini-1.5-pro": { in: 1.25, out: 5.00 }
   };
   var AGENT_NAMES = {
     research: "Research & Data", finance: "Finance", ops: "Operations",
