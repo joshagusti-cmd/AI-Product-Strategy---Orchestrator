@@ -149,7 +149,16 @@
         var card = list.querySelector("[data-row='" + a.id + "']");
         Array.prototype.forEach.call(card.querySelectorAll("button[data-decision]"), function (b) { b.disabled = true; });
         try {
-          await Aiven.decideApproval(a.id, decision);
+          // Gate 2 (migrations/0023, "Two-gate" autonomy) needs a
+          // distinct RPC, not the plain table UPDATE gate 1 uses — see
+          // decideReleaseApproval in assets/data.js. Same branch as the
+          // full Approval Queue, so deciding from a phone has the
+          // identical real effect as deciding from the desktop console.
+          if (a.isReleaseGate) {
+            await Aiven.decideReleaseApproval(a.id, decision);
+          } else {
+            await Aiven.decideApproval(a.id, decision);
+          }
           a.status = decision;
           await Aiven.addAudit({ actor: "Human reviewer", model: "—", risk: a.risk,
             action: (a.status === "approved" ? "Approved: " : "Rejected: ") + a.title,
@@ -158,12 +167,25 @@
           renderKpis();
           renderCards();
 
-          // Same real effect as the full Approval Queue: an approval
-          // that paused a real Orchestrate run (Policy Editor's Core-tier
-          // gate) actually resumes it on approval, or genuinely ends it
-          // on rejection — deciding from a phone has the identical
-          // consequence as deciding from the desktop console.
-          if (a.hasRunState && !a.resumed) {
+          if (a.isReleaseGate) {
+            // Gate 2 — the run already fully generated its deliverable.
+            // Nothing left to resume; approving releases it into
+            // Workflow History, rejecting keeps it held back for good.
+            if (decision === "approved") {
+              await Aiven.addAudit({ actor: "Orchestrator Core", model: "—", risk: "—",
+                action: "Released for distribution: " + a.title,
+                detail: "Gate 2 (Two-gate autonomy) cleared — now visible in Workflow History." });
+              Aiven.toast("Released — now visible in Workflow History.");
+            } else {
+              await Aiven.addAudit({ actor: "Orchestrator Core", model: "—", risk: "—",
+                action: "Release rejected, held back: " + a.title,
+                detail: "Gate 2 (Two-gate autonomy) — the generated deliverable stays out of Workflow History." });
+            }
+          } else if (a.hasRunState && !a.resumed) {
+            // Same real effect as the full Approval Queue: an approval
+            // that paused a real Orchestrate run (gate 1, Policy Editor's
+            // Core-tier gate) actually resumes it on approval, or
+            // genuinely ends it on rejection.
             if (decision === "approved") {
               Aiven.toast("Resuming the paused run — real Claude calls in progress…");
               try {
@@ -172,7 +194,9 @@
                 if (res.rejected) {
                   Aiven.toast(res.error);
                 } else {
-                  Aiven.toast("Run resumed — executive deliverable generated. See Workflow History.");
+                  Aiven.toast(res.releaseApprovalId
+                    ? "Run resumed — deliverable generated, now held for a second release approval (Two-gate)."
+                    : "Run resumed — executive deliverable generated. See Workflow History.");
                   await Aiven.addAudit({ actor: "Orchestrator Core", model: res.model, risk: "—",
                     action: "Resumed paused run and generated executive deliverable: " + a.title,
                     detail: "Strategy + Writer calls completed after approval via the mobile Approval companion." });

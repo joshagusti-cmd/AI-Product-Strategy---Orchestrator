@@ -1,0 +1,14 @@
+-- Fixes a real gap in migrations/0023 (two_gate_release): the revoke
+-- there only said "from public", but this project's default privileges
+-- auto-grant EXECUTE to anon on newly created functions in the public
+-- schema (an explicit anon grant, not inherited from PUBLIC) — a
+-- "revoke ... from public" alone doesn't touch it. Every other admin
+-- RPC in this codebase (set_provider_key, remove_provider_key, etc.,
+-- migrations/0022) explicitly revokes "from public, anon" for exactly
+-- this reason; this migration brings decide_release_approval in line
+-- with that established pattern. The function's own internal
+-- private.is_workspace_member check would likely still block an
+-- unauthenticated caller (anon has no workspace membership), but this
+-- codebase's convention is defense in depth — never rely solely on the
+-- in-function check when a grant can remove the surface entirely.
+revoke execute on function public.decide_release_approval(text, text) from anon;

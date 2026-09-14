@@ -1256,6 +1256,15 @@
       toast("⚠️ Objective flagged for possible prompt-injection language (" + injText + ") — neutralized before it reached any agent.");
     }
 
+    // Gate 2 (migrations/0023, "Two-gate" autonomy) — the deliverable
+    // above is real and yours to see, but it's held out of the shared
+    // Workflow History archive until a second, separate approval
+    // releases it (Approval Queue). Not shown at all for any other
+    // policy autonomy, since only "Two-gate" ever sets this.
+    if (response.releaseApprovalId) {
+      toast("Held for a second release approval (Two-gate policy) — won't appear in Workflow History until approved.");
+    }
+
     var routing = response.routing;
     if (routing && routing.mode === "auto") {
       var tierDesc = {

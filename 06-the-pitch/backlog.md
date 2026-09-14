@@ -12,7 +12,7 @@ Input to the Horizon mapping in `roadmap.md`. Constructed from `feature-ideas.md
 | Verify kill-switch failover with a live drill | Task | P1 | Planned | The Moat | reliability, ops |
 | Validate pricing model with real buyer conversations | Task | P0 | Planned | The Margin | pricing, research |
 | Run a real Shadow AI Audit (replace illustrative placeholder) | Task | P1 | Planned — the prototype's scan mechanism itself is now real (Done: `shadow-ai.html` scans real Agent Registry drift + real Orchestrate substitution telemetry, not fictional findings); a real audit of outside tool use still needs a real design partner + endpoint/CASB integration, which is this row's remaining scope | The Guardrails | governance, audit |
-| Ship Killer-tier dispute generator to production (two-gate approval live) | Epic | P0 | Backlog | The Contract | core, hitl |
+| Ship Killer-tier dispute generator to production (two-gate approval live) | Epic | P0 | Backlog — two-gate approval itself is Done (prototype): a "Two-gate" policy now really holds every generated run back from Workflow History until a distinct second approval releases it, migrations/0023, generalized across the whole orchestrator rather than fraud-vertical-specific; shipping the Killer-tier dispute generator itself to production is a separate, much larger fraud/dispute-vertical epic, still Backlog | The Contract | core, hitl |
 | Build Cross-Domain Transfer loop into AML scoring | Epic | P1 | Backlog | The Moat | data-flywheel, expansion |
 | Formal EU AI Act / GDPR legal review | Task | P0 | Backlog | The Guardrails | compliance, legal |
 | Model break-even economics (CAC + fixed opex) | Task | P0 | Backlog | The Margin | finance |

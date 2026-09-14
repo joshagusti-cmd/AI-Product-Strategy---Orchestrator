@@ -165,7 +165,14 @@
         var decision = btn.dataset.decision;
         Array.prototype.forEach.call(body.querySelectorAll("button[data-decision][data-id='" + a.id + "']"), function (b) { b.disabled = true; });
         try {
-          await Aiven.decideApproval(a.id, decision);
+          // Gate 2 (migrations/0023, "Two-gate" autonomy) is a distinct
+          // RPC, not the plain table UPDATE gate 1 uses — see
+          // decideReleaseApproval in assets/data.js.
+          if (a.isReleaseGate) {
+            await Aiven.decideReleaseApproval(a.id, decision);
+          } else {
+            await Aiven.decideApproval(a.id, decision);
+          }
           a.status = decision;
           await Aiven.addAudit({ actor: "Human reviewer", model: "—", risk: a.risk,
             action: (a.status === "approved" ? "Approved: " : "Rejected: ") + a.title,
@@ -174,14 +181,32 @@
           renderKpis();
           renderTable();
 
-          // This approval paused a real Orchestrate run (the Policy
-          // Editor's Core-tier gate — see supabase/functions/orchestrate)
-          // rather than being a plain governance request — so deciding it
-          // here has a real, further effect: approving actually resumes
-          // the run (Strategy + Writer, real Claude calls) to produce the
-          // executive deliverable; rejecting genuinely ends it, no
-          // deliverable ever generated.
-          if (a.hasRunState && !a.resumed) {
+          if (a.isReleaseGate) {
+            // This is gate 2 — the run already fully generated its
+            // deliverable (that's what "Two-gate" held back on Workflow
+            // History until now). There's nothing left to resume; the
+            // real effect of approving is releasing the already-real
+            // content into the shared archive, and rejecting keeps it
+            // held back there for good.
+            if (decision === "approved") {
+              await Aiven.addAudit({ actor: "Orchestrator Core", model: "—", risk: "—",
+                action: "Released for distribution: " + a.title,
+                detail: "Gate 2 (Two-gate autonomy) cleared — now visible in Workflow History." });
+              Aiven.toast("Released — now visible in Workflow History.");
+            } else {
+              await Aiven.addAudit({ actor: "Orchestrator Core", model: "—", risk: "—",
+                action: "Release rejected, held back: " + a.title,
+                detail: "Gate 2 (Two-gate autonomy) — the generated deliverable stays out of Workflow History." });
+            }
+          } else if (a.hasRunState && !a.resumed) {
+            // This approval paused a real Orchestrate run (gate 1, the
+            // Policy Editor's Core-tier gate — see
+            // supabase/functions/orchestrate) rather than being a plain
+            // governance request — so deciding it here has a real,
+            // further effect: approving actually resumes the run
+            // (Strategy + Writer, real Claude calls) to produce the
+            // executive deliverable; rejecting genuinely ends it, no
+            // deliverable ever generated.
             if (decision === "approved") {
               Aiven.toast("Resuming the paused run — real Claude calls in progress…");
               try {
@@ -190,7 +215,9 @@
                 if (res.rejected) {
                   Aiven.toast(res.error);
                 } else {
-                  Aiven.toast("Run resumed — executive deliverable generated. See the workspace's Audit Trail.");
+                  Aiven.toast(res.releaseApprovalId
+                    ? "Run resumed — deliverable generated, now held for a second release approval (Two-gate)."
+                    : "Run resumed — executive deliverable generated. See the workspace's Audit Trail.");
                   await Aiven.addAudit({ actor: "Orchestrator Core", model: res.model, risk: "—",
                     action: "Resumed paused run and generated executive deliverable: " + a.title,
                     detail: "Strategy + Writer calls completed after approval via the Approval Queue." });

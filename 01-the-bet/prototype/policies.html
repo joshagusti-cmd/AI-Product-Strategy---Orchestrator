@@ -109,7 +109,7 @@
         "<div class='threshold-row'><input type='range' class='control threshold-range' min='0' max='100' value='" + p.riskThreshold + "'" + dis + ">" +
         "<span class='threshold-val tabular'>" + p.riskThreshold + "</span></div>" +
         "<div class='field-hint'>A score at or above this crosses into escalation for this tier." +
-        (isEnforced ? " On this policy specifically: with Autonomy set to Approval-required or Two-gate, a real Orchestrate run's Risk &amp; Compliance flag at or above this threshold actually pauses the run — Strategy and Writer don't run until a human decides. Autonomous/Advisory never pause it." : "") +
+        (isEnforced ? " On this policy specifically: with Autonomy set to Approval-required or Two-gate, a real Orchestrate run's Risk &amp; Compliance flag at or above this threshold actually pauses the run before Strategy/Writer generate anything (gate 1) — Autonomous/Advisory never pause it. Two-gate adds a real second gate: every run it generates is held out of Workflow History until a separate release approval clears it (gate 2), whether or not gate 1 ever fired." : "") +
         "</div></div>" +
         "<div class='field'><span class='field-label'>Escalation rule</span>" +
         "<textarea class='control escalation-text' rows='3'" + dis + ">" + p.escalation + "</textarea></div>" +
