@@ -29,8 +29,17 @@
   --paper-ink: #201c14;
   --paper-ink-dim: #57503f;
   --paper-line: #d3ccb8;
-  --mono: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", ui-monospace, Menlo, "Liberation Mono", monospace;
-  --sans: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* One type family (IBM Plex), three registers — a deliberate pairing,
+     not a default: Mono for the console's labels/data (this product's
+     terminal-of-record voice), Sans for running prose, Serif for the
+     one moment this app produces an actual document (the deliverable,
+     see .deliverable in index.html) — an "official filing" register
+     distinct from the console around it. Loaded for real via Google
+     Fonts (see the <link> in every page's <head>); the system-font
+     tail is the fallback, not the plan. */
+  --mono: "IBM Plex Mono", "JetBrains Mono", "Cascadia Code", Consolas, "SF Mono", ui-monospace, Menlo, "Liberation Mono", monospace;
+  --sans: "IBM Plex Sans", -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --display: "IBM Plex Serif", Georgia, "Times New Roman", serif;
 }
 :root[data-theme="light"] {
   --bg: #eef1f6; --bg-grid: #e6eaf1; --surface: #ffffff; --surface-raised: #ffffff;
@@ -314,6 +323,41 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 .btn.ghost.reject:hover { border-color: var(--critical); color: var(--critical); }
 .btn.small { padding: 5px 10px; font-size: 10.5px; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ---------- stamp (the signature element) ----------
+   A real human decision on a governed action — approve/reject an
+   approval, govern/kill a Shadow AI finding, release a Two-gate run —
+   rendered as an actual ink stamp, not another colored pill. This is
+   the one place this design spends its boldness: it's specific to what
+   this product is (a governance/audit layer whose whole job is real
+   human decisions on AI actions), not decoration. Everything else stays
+   disciplined. Reuses the existing semantic colors (--success/
+   --critical) via `currentColor` rather than inventing a new palette. */
+.stamp {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-weight: 700; font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.14em;
+  padding: 5px 10px 4px; border: 2px solid currentColor;
+  position: relative; background: transparent;
+  transform: rotate(-3.5deg); white-space: nowrap;
+}
+.stamp::before {
+  /* Inner hairline — the double ring a real rubber stamp leaves. */
+  content: ""; position: absolute; inset: 2px; border: 1px solid currentColor;
+  opacity: 0.45; pointer-events: none;
+}
+.stamp.approved, .stamp.governed, .stamp.govern, .stamp.released { color: var(--success); }
+.stamp.rejected, .stamp.killed, .stamp.kill { color: var(--critical); }
+.stamp.pending-release { color: var(--accent); border-style: dashed; }
+/* The one orchestrated motion in this system: a stamp hitting paper,
+   played once, at the real moment a decision is recorded — not ambient
+   animation. Respects prefers-reduced-motion via the global rule below. */
+.stamp-in { animation: stampDown 0.36s cubic-bezier(0.19, 1.82, 0.42, 0.94) both; }
+@keyframes stampDown {
+  0% { transform: rotate(-15deg) scale(1.7); opacity: 0; }
+  55% { transform: rotate(-1deg) scale(0.94); opacity: 1; }
+  100% { transform: rotate(-3.5deg) scale(1); opacity: 1; }
+}
 
 /* ---------- empty state ---------- */
 .empty-state { padding: 30px 0; text-align: center; color: var(--text-mute); font-size: 12.5px; }

@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Aiven Agent Orchestrator</title>
 <meta name="description" content="Command-center prototype for coordinating, governing, and auditing enterprise AI agents.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/shared.css">
 <style>
   /* ---------- hero / command console ---------- */
@@ -183,12 +186,18 @@
   .roi-stat .sub { font-size: 11px; color: var(--text-mute); margin-top: 3px; }
   #roi-chart { width: 100%; height: 90px; display: block; }
 
-  /* ---------- deliverable ---------- */
+  /* ---------- deliverable ----------
+     The one moment this console produces an actual document — the real
+     Claude-generated action plan — set in the serif register (--display)
+     against the dark console's mono/sans, an "official filing" apart
+     from the terminal that generated it. The mono eyebrow/section labels
+     stay, deliberately: technical annotation on a formal document, not
+     inconsistency. */
   .deliverable-wrap { display: none; margin-top: 18px; }
   .deliverable-wrap.show { display: block; animation: flashIn .5s ease; }
   .deliverable {
     background: var(--paper); color: var(--paper-ink); border: 1px solid var(--paper-line);
-    padding: 40px 46px 46px;
+    padding: 40px 46px 46px; font-family: var(--display);
   }
   .deliverable-head {
     display: flex; justify-content: space-between; align-items: start; gap: 20px;
@@ -199,7 +208,8 @@
     color: var(--paper-ink-dim);
   }
   .deliverable-head h3 {
-    font-family: var(--mono); font-size: 22px; margin: 6px 0 0; letter-spacing: -0.01em; text-wrap: balance;
+    font-family: var(--display); font-weight: 600; font-size: 24px; margin: 7px 0 0;
+    letter-spacing: -0.01em; line-height: 1.25; text-wrap: balance;
   }
   .deliverable-actions { display: flex; gap: 8px; flex-shrink: 0; }
   .deliverable-actions button {
@@ -212,11 +222,14 @@
     color: var(--paper-ink-dim); margin: 26px 0 10px; padding-top: 20px; border-top: 1px solid var(--paper-line);
   }
   .deliverable h4:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
-  .deliverable p { font-size: 13.5px; line-height: 1.65; max-width: 78ch; margin: 0 0 10px; }
+  .deliverable p { font-size: 14.5px; line-height: 1.7; max-width: 78ch; margin: 0 0 10px; }
   .deliverable ul.findings { margin: 0; padding-left: 20px; }
   .deliverable ul.findings li { font-size: 13px; line-height: 1.6; margin-bottom: 8px; max-width: 74ch; }
   .deliverable ul.findings li b { font-weight: 700; }
-  table.rec { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  /* Tabular data stays in the sans register even inside the paper —
+     legible, scannable rows, not serif prose; the serif is for the
+     document's actual prose (headline, summary, findings). */
+  table.rec { width: 100%; border-collapse: collapse; font-size: 12.5px; font-family: var(--sans); }
   table.rec th {
     text-align: left; font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.06em;
     color: var(--paper-ink-dim); padding: 8px 10px; border-bottom: 1px solid var(--paper-ink);
@@ -226,7 +239,7 @@
     font-family: var(--mono); font-size: 9px; text-transform: uppercase; padding: 2px 6px;
     border: 1px solid var(--paper-ink-dim);
   }
-  table.audit { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+  table.audit { width: 100%; border-collapse: collapse; font-size: 11.5px; font-family: var(--sans); }
   table.audit th {
     text-align: left; font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em;
     color: var(--paper-ink-dim); padding: 7px 10px; border-bottom: 1px solid var(--paper-ink);
