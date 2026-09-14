@@ -72,6 +72,15 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // createPendingApproval/handleResume below, and
 // migrations/0011_policy_gated_approvals.sql.
 //
+// "Two-gate" autonomy adds a real second gate on top of that first one
+// (migrations/0023): every run it produces is recorded but held back
+// from the shared Workflow History archive until a distinct, second
+// approval releases it — whether or not the first gate above ever
+// fired. The person who ran Orchestrate still sees their own generated
+// result immediately; the second gate governs the shared archive other
+// workspace members browse, matching the real "one to generate, one to
+// send" distinction. See applyReleaseGate/decide_release_approval below.
+//
 // Every silent substitution above (a request for a model with no real
 // key configured) also leaves a real trace, not just the frontend's
 // toast: logCall records the originally-requested label alongside what
@@ -672,16 +681,23 @@ async function recordUsage(workspaceId: string, userId: string) {
 // the one durable copy of what the run actually produced. Called once,
 // right alongside recordUsage, at both real completion points (a fresh
 // run finishing, or a paused run resumed to completion).
+// Returns the newly-inserted row's real id (via Prefer: return=
+// representation) — null on any failure, including the archive-must-
+// never-break-a-run catch below. The caller (both call sites) uses it
+// only to wire up the release gate (below); recordRun itself still
+// never throws, so a failure here degrades to "no release gate applied
+// this time" rather than failing the run that already completed.
 async function recordRun(
   ctx: RunCtx,
   result: { executiveSummary: string; steps: RunCtx["steps"]; findings: string[]; recommendations: unknown[]; riskFlags: string[] },
   model: string,
   wasPaused: boolean,
   approvalId: string | null,
-) {
+): Promise<number | null> {
   try {
-    await serviceRoleFetch("orchestrate_runs", {
+    const resp = await serviceRoleFetch("orchestrate_runs", {
       method: "POST",
+      headers: { Prefer: "return=representation" },
       body: JSON.stringify({
         workspace_id: ctx.workspaceId,
         user_id: ctx.userId,
@@ -703,9 +719,63 @@ async function recordRun(
         approval_id: approvalId,
       }),
     });
+    if (!resp.ok) return null;
+    const rows = await resp.json();
+    return rows[0]?.id ?? null;
   } catch (err) {
     // Archiving must never break a real orchestration run.
     console.error("orchestrate: failed to record run history", err);
+    return null;
+  }
+}
+
+// Gate 2 (migrations/0023): "Two-gate" autonomy holds every completed
+// run back from the shared Workflow History archive until a second,
+// separate approval releases it — distinct from gate 1 above, which
+// only ever fires when risk crosses the threshold and governs whether a
+// deliverable gets *generated* at all. Any other autonomy (including
+// "Approval-required", which only ever had gate 1) releases immediately,
+// unchanged from before this existed. Fails open exactly like gate 1: a
+// missing/deleted policy row, or any write failure, releases the run
+// rather than silently wedging it unreleased forever with no real
+// approval row to clear it.
+async function applyReleaseGate(
+  workspaceId: string,
+  runId: number | null,
+  objective: string,
+  departments: string[],
+): Promise<{ releaseApprovalId: string | null }> {
+  if (runId === null) return { releaseApprovalId: null };
+  try {
+    const policy = await getCompliancePolicy(workspaceId);
+    if (!policy || policy.autonomy !== "Two-gate") return { releaseApprovalId: null };
+
+    const releaseApprovalId = "release-" + crypto.randomUUID();
+    await serviceRoleFetch("approvals", {
+      method: "POST",
+      body: JSON.stringify({
+        workspace_id: workspaceId,
+        id: releaseApprovalId,
+        title: "Release: " + objective,
+        agent: "Executive Writer Agent",
+        dept: departments.length ? departments.join(", ") : "Cross-functional",
+        // Not a risk assessment — gate 1 already made that call (or the
+        // run never crossed the threshold at all). This is a
+        // distribution control, and "Low" is the honest default rather
+        // than overstating risk a second time.
+        risk: "Low",
+        status: "pending",
+        release_run_id: runId,
+      }),
+    });
+    await serviceRoleFetch(`orchestrate_runs?id=eq.${runId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ release_approval_id: releaseApprovalId }),
+    });
+    return { releaseApprovalId };
+  } catch (err) {
+    console.error("orchestrate: failed to apply release gate — releasing immediately instead", err);
+    return { releaseApprovalId: null };
   }
 }
 
@@ -882,13 +952,15 @@ async function getCompliancePolicy(workspaceId: string): Promise<{ autonomy: str
   return rows[0] || null;
 }
 
-// The real gate: only "Approval-required" and "Two-gate" autonomy ever
-// pause a run — "Autonomous" and "Advisory" mean exactly what their
-// labels say (generate automatically; advisory-only for the human) and
-// never block. A "Two-gate" policy's second gate (approval to
-// distribute externally) isn't modeled here — the Command Center has no
-// separate "send externally" action to gate — so both block the same
-// single point, before the agents after the risk gate run.
+// Gate 1: only "Approval-required" and "Two-gate" autonomy ever pause a
+// run here — "Autonomous" and "Advisory" mean exactly what their labels
+// say (generate automatically; advisory-only for the human) and never
+// block. Both stop at this same single point, before the agents after
+// the risk gate run — this only ever fires when risk actually crosses
+// the threshold. "Two-gate" autonomy's real second gate (migrations/
+// 0023) is modeled separately, in applyReleaseGate below: it holds
+// EVERY completed run back from Workflow History until a distinct
+// release approval, whether or not this gate ever fired.
 function shouldPauseForPolicy(policy: { autonomy: string; risk_threshold: number } | null, riskFlag: { severity?: string }): boolean {
   if (!policy) return false;
   if (policy.autonomy !== "Approval-required" && policy.autonomy !== "Two-gate") return false;
@@ -1364,7 +1436,8 @@ async function handleResume(workspaceId: string, userId: string, approvalId: str
         // continuation of that same logical run, not a second Orchestrate
         // call, so it must not count against the daily cap twice.
         const finalModel = Array.from(ctx.modelsUsed).join(" · ");
-        await recordRun(ctx, outcome.result, finalModel, true, approvalId);
+        const runId = await recordRun(ctx, outcome.result, finalModel, true, approvalId);
+        const releaseGate = await applyReleaseGate(workspaceId, runId, ctx.objective, ctx.departments);
         await logRedactions(workspaceId, newRedactionsSinceResume());
         return json({
           result: outcome.result,
@@ -1375,6 +1448,7 @@ async function handleResume(workspaceId: string, userId: string, approvalId: str
           resumedApprovalId: approvalId,
           redactions: ctx.redactions,
           promptInjectionFlags: ctx.promptInjectionFlags,
+          releaseApprovalId: releaseGate.releaseApprovalId,
         });
       }
       // A real pipeline could in principle have a second risk-gate-like
@@ -1535,7 +1609,8 @@ Deno.serve(async (req: Request) => {
       if (outcome.kind === "final") {
         await recordUsage(workspaceId, userId);
         const finalModel = Array.from(ctx.modelsUsed).join(" · ");
-        await recordRun(ctx, outcome.result, finalModel, false, null);
+        const runId = await recordRun(ctx, outcome.result, finalModel, false, null);
+        const releaseGate = await applyReleaseGate(workspaceId, runId, ctx.objective, ctx.departments);
         await logRedactions(workspaceId, ctx.redactions);
         return json({
           result: outcome.result,
@@ -1545,6 +1620,7 @@ Deno.serve(async (req: Request) => {
           routing: routingInfo(ctx),
           redactions: ctx.redactions,
           promptInjectionFlags: ctx.promptInjectionFlags,
+          releaseApprovalId: releaseGate.releaseApprovalId,
         });
       }
       // "continue" — fall through to the next agent

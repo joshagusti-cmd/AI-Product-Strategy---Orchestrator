@@ -7,7 +7,10 @@
 <meta name="description" content="Every completed Orchestrate run's full deliverable, archived exactly as it was generated.">
 <link rel="stylesheet" href="assets/shared.css">
 <style>
-  .kpi-strip { grid-template-columns: repeat(4, 1fr); }
+  .kpi-strip { grid-template-columns: repeat(5, 1fr); }
+  .release-pill { font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 7px; border: 1px solid var(--accent-dim); color: var(--accent); display: inline-block; margin-left: 6px; }
+  .held-back { padding: 24px 20px; font-size: 13px; color: var(--text-mute); }
+  .held-back a { color: var(--accent); }
   .filters { margin: 18px 0; display: flex; flex-direction: column; gap: 10px; }
   .filter-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .filter-row .filter-label { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-mute); flex-shrink: 0; }
@@ -89,6 +92,7 @@
     <div class="kpi"><div class="eyebrow">Paused → resumed</div><div class="val tabular" id="kpi-paused">—</div><div class="delta">cleared the policy gate</div></div>
     <div class="kpi"><div class="eyebrow">Tokens processed</div><div class="val tabular" id="kpi-tokens">—</div><div class="delta">input + output, all runs</div></div>
     <div class="kpi"><div class="eyebrow">Most recent</div><div class="val" id="kpi-latest" style="font-size:14px;">—</div><div class="delta">run archived</div></div>
+    <div class="kpi"><div class="eyebrow">Pending release</div><div class="val tabular" id="kpi-pending-release">—</div><div class="delta" id="kpi-pending-release-delta">Two-gate policy</div></div>
   </section>
 
   <div class="filters" id="filters-wrap">
@@ -147,6 +151,14 @@
 
   function fmtInt(n) { return (n || 0).toLocaleString(); }
 
+  // Gate 2 (migrations/0023, "Two-gate" autonomy): a run with no
+  // release_approval_id was never gated at all (every other autonomy,
+  // or every run archived before this shipped) — always released. One
+  // that has a release_approval_id is released only once released_at is
+  // actually set, by a real second approval decided in the Approval
+  // Queue (Aiven.decideReleaseApproval).
+  function isReleased(r) { return !r.release_approval_id || !!r.released_at; }
+
   // Real per-department drill-down: a run's real departments array
   // (the scope it was actually run with) decides which department chips
   // exist and which runs match one — not a fixed department list.
@@ -175,6 +187,10 @@
     document.getElementById("kpi-tokens").textContent = fmtInt(tokens);
     var latest = runs && runs.length ? runs[0] : null;
     document.getElementById("kpi-latest").textContent = latest ? Aiven.timeAgo(latest.created_at) : "—";
+    var pendingRelease = runs ? runs.filter(function (r) { return !isReleased(r); }).length : 0;
+    document.getElementById("kpi-pending-release").textContent = pendingRelease;
+    document.getElementById("kpi-pending-release-delta").textContent = pendingRelease > 0 ? "awaiting gate 2" : "Two-gate policy";
+    document.getElementById("kpi-pending-release-delta").className = "delta" + (pendingRelease > 0 ? " warn" : "");
   }
 
   function matches(r) {
@@ -184,6 +200,15 @@
   }
 
   function renderDetail(r) {
+    // Gate 2: the deliverable below is real and already generated, but a
+    // "Two-gate" policy holds it out of this shared archive until a
+    // second, separate approval releases it — see the Approval Queue.
+    // Full-hide, not a partial reveal: showing findings/recommendations
+    // while calling the run "not released" would defeat the point of a
+    // second gate on distribution.
+    if (!isReleased(r)) {
+      return "<div class='held-back'>Generated, but held for a second release approval (Two-gate policy) — see the <a href='approvals.html'>Approval Queue</a>. The deliverable will appear here once released.</div>";
+    }
     var findings = (r.findings || []).map(function (f) { return "<li>" + f + "</li>"; }).join("") || "<li>No findings recorded.</li>";
     var risks = (r.risk_flags || []).map(function (f) { return "<li>" + f + "</li>"; }).join("") || "<li>No risk flags recorded.</li>";
     var recs = (r.recommendations || []).map(function (rec) {
@@ -250,9 +275,10 @@
     }
 
     body.innerHTML = rows.map(function (r) {
-      var status = r.was_paused
+      var status = (r.was_paused
         ? "<span class='paused-pill'>Paused → resumed</span>"
-        : "<span class='muted' style='font-size:11px;'>Completed</span>";
+        : "<span class='muted' style='font-size:11px;'>Completed</span>") +
+        (isReleased(r) ? "" : "<span class='release-pill'>Pending release</span>");
       // r.id is a real Postgres bigint (orchestrate_runs.id), which
       // supabase-js/PostgREST deserializes as a JS number; openId and
       // selectedIds always hold strings (read from a DOM data-id
@@ -300,9 +326,10 @@
   }
 
   function renderCompareCol(r) {
-    var status = r.was_paused
+    var status = (r.was_paused
       ? "<span class='paused-pill'>Paused → resumed</span>"
-      : "<span class='muted' style='font-size:11px;'>Completed</span>";
+      : "<span class='muted' style='font-size:11px;'>Completed</span>") +
+      (isReleased(r) ? "" : "<span class='release-pill'>Pending release</span>");
     return "<div class='compare-col'>" +
       "<div class='compare-col-head'>" +
       "<div class='obj'>" + r.objective + "</div>" +

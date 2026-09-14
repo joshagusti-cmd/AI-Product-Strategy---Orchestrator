@@ -158,7 +158,13 @@
       // page know to actually resume the run once approved, not just
       // flip a status. `hasRunState` is a boolean mirror of run_state's
       // presence; the full payload isn't needed client-side.
-      hasRunState: !!row.run_state, resumed: !!row.resumed_at
+      hasRunState: !!row.run_state, resumed: !!row.resumed_at,
+      // Gate 2 (migrations/0023, "Two-gate" autonomy): present only on
+      // the second, distribution-control approval a completed run
+      // raised. Deciding this one calls decideReleaseApproval, not
+      // decideApproval + resumeOrchestrate — there's no run left to
+      // resume, just the run's own released_at to flip.
+      isReleaseGate: !!row.release_run_id
     };
   }
   function mapAudit(row) {
@@ -333,6 +339,16 @@
     requireOwnWorkspace();
     var r = await sb.from("approvals").update({ status: decision, decided_at: new Date().toISOString() })
       .eq("workspace_id", currentWorkspaceId).eq("id", id);
+    if (r.error) throw r.error;
+  }
+
+  // Gate 2 (migrations/0023, "Two-gate" autonomy) — a distinct RPC, not
+  // the plain table UPDATE above, since deciding a release approval also
+  // has to flip the gated run's own released_at atomically. Any
+  // workspace member may decide, same as gate 1's plain approvals.
+  async function decideReleaseApproval(id, decision) {
+    requireOwnWorkspace();
+    var r = await sb.rpc("decide_release_approval", { p_approval_id: id, p_decision: decision });
     if (r.error) throw r.error;
   }
 
@@ -587,7 +603,7 @@
     await ready;
     if (currentWorkspaceId === DEMO_WORKSPACE_ID) return null;
     var r = await sb.from("orchestrate_runs")
-      .select("id, objective, departments, sources, auto_route, routing, steps, executive_summary, findings, recommendations, risk_flags, model, input_tokens, output_tokens, substitutions, was_paused, approval_id, created_at")
+      .select("id, objective, departments, sources, auto_route, routing, steps, executive_summary, findings, recommendations, risk_flags, model, input_tokens, output_tokens, substitutions, was_paused, approval_id, created_at, released_at, release_approval_id")
       .eq("workspace_id", currentWorkspaceId)
       .order("created_at", { ascending: false })
       .limit(200);
@@ -1449,6 +1465,7 @@
     deleteExternalAgent: deleteExternalAgent,
     savePolicy: savePolicy,
     decideApproval: decideApproval,
+    decideReleaseApproval: decideReleaseApproval,
     decideShadowTool: decideShadowTool,
     addShadowTool: addShadowTool,
     addAudit: addAudit,

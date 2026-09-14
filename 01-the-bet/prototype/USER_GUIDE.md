@@ -81,9 +81,10 @@ The compliance-owner control surface: **autonomy level**, **escalation risk thre
 The **Core** tier's policy card is marked **"Enforced on real Orchestrate runs"** — because it's not just a label, it's the one policy the Command Center's real pipeline actually checks after every Risk & Compliance Agent finding:
 
 - **Autonomous** / **Advisory** — never pauses a run. The flag is shown, but the run continues automatically.
-- **Approval-required** / **Two-gate** — a real risk flag scoring at or above your set threshold genuinely pauses the run before it can finish, waiting on a human decision (see **Command Center** above).
+- **Approval-required** — a real risk flag scoring at or above your set threshold genuinely pauses the run before it can finish (gate 1), waiting on a human decision (see **Command Center** above). Once approved, the deliverable is generated and immediately visible to the whole workspace.
+- **Two-gate** — gate 1 works exactly the same way, plus a real second gate: every run this policy produces, whether or not gate 1 ever fired, is generated but held out of Workflow History until a second, separate approval releases it (see **Approval Queue** below). You still see your own result right away in the Command Center — gate 2 governs when it's visible to the rest of the workspace, not whether you can see what you just ran.
 
-The risk threshold is a slider from 0–100; a flag's severity (Low/Medium/High) maps to a fixed score (25/60/90) compared against it. Raise or lower the threshold and you're changing, in real time, whether the next real run pauses.
+The risk threshold is a slider from 0–100; a flag's severity (Low/Medium/High) maps to a fixed score (25/60/90) compared against it. Raise or lower the threshold and you're changing, in real time, whether the next real run pauses at gate 1.
 
 Only Admins and Compliance Owners can edit policies; every save is logged to the Audit Trail.
 
@@ -92,6 +93,8 @@ Only Admins and Compliance Owners can edit policies; every save is logged to the
 ## Approval Queue (`approvals.html`)
 
 The org-wide backlog of everything waiting on a human — filterable by risk and by department. Anyone in the workspace can approve or reject. Deciding an approval that came from a paused Orchestrate run has a real, further effect: **Approve** actually resumes that run's remaining Claude calls and produces the deliverable; **Reject** genuinely ends it. This is the same real effect as deciding it from the Command Center's own panel — just from wherever you happen to be reviewing.
+
+**Release approvals** ("Release: <objective>," titled from the Executive Writer Agent) are a distinct real approval type under a **Two-gate** policy — the run already fully generated its deliverable, so there's nothing left to resume. **Approve** releases it into Workflow History for the whole workspace to see; **Reject** keeps it generated but permanently held back from that shared archive.
 
 **On your phone.** Click **Open the mobile companion view** (or go straight to `mobile-approvals.html`) for a page built for a phone screen, not the desktop table shrunk down: two KPI tiles (Pending, High risk pending), a Pending/All toggle, and each request as a card with big Approve/Reject buttons. It's the same live queue and the same real decisions — approving from your phone resumes a paused run exactly like approving from your laptop. It's a companion view, not a tenth page in the main navigation, so you'll always get to it via a link rather than the subnav.
 
@@ -112,6 +115,8 @@ A real-time, searchable log of every agent and human action — approving someth
 A real, searchable archive of every completed Orchestrate run's full deliverable — not just the Audit Trail's one-line pointer to it. Search past objectives or filter by department (built from the real department scope each run actually used), then click a row to expand its executive summary, findings, recommendations, risk flags, and every agent's individual step, exactly as it looked when the run finished. Runs that paused for a policy approval and were later resumed are marked so.
 
 **Full prompt visibility.** Each agent step now has a **View prompt** toggle showing the exact system and user prompt that agent's real Claude call actually received — the real inputs behind its response, not just the response itself. Runs archived before this shipped simply have no toggle (an honest gap, not a backfilled guess).
+
+**Pending release.** A run generated under a **Two-gate** policy (Policies above) shows a **Pending release** badge and its deliverable stays hidden here — a real "Generated, but held for a second release approval" placeholder — until someone decides its release approval in the Approval Queue. The **Pending release** KPI tile counts how many are waiting on you right now.
 
 **Comparing two runs.** Check the box on any two rows (checking a third does nothing until you uncheck one) and click **Compare selected** to see both full deliverables side by side — objective, scope, model, executive summary, findings, recommendations, risk flags, every agent step. It's a real juxtaposition of two real archived runs, not a computed diff — nothing is highlighted as "changed," you're just looking at both in full at once. Click **← Back to archive** to return to the list.
 
