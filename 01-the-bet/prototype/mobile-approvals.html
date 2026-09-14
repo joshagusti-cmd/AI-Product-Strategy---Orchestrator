@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Approvals — Aiven Orchestrator</title>
 <meta name="description" content="Mobile companion: the Approval Queue only, sized for a phone, for reviewing agent requests on the go.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/shared.css">
 <style>
   /* A genuinely mobile-first layout, not a squeezed-down desktop page —
@@ -48,9 +51,7 @@
   .m-card-meta { margin-top: 6px; font-family: var(--mono); font-size: 10.5px; color: var(--text-mute); display: flex; flex-wrap: wrap; gap: 6px 10px; }
   .m-card-actions { display: flex; gap: 8px; margin-top: 12px; }
   .m-card-actions .btn { flex: 1; justify-content: center; padding: 12px 10px; font-size: 12px; min-height: 44px; }
-  .m-decided { margin-top: 12px; font-family: var(--mono); font-size: 11px; }
-  .m-decided.approved { color: var(--success); }
-  .m-decided.rejected { color: var(--critical); }
+  .m-decided { margin-top: 12px; }
 
   footer.foot { margin-top: 28px; font-size: 10.5px; }
 </style>
@@ -122,7 +123,8 @@
       ? "<div class='m-card-actions'>" +
         "<button class='btn ghost approve' data-id='" + a.id + "' data-decision='approved'>Approve</button>" +
         "<button class='btn ghost reject' data-id='" + a.id + "' data-decision='rejected'>Reject</button></div>"
-      : "<div class='m-decided " + a.status + "'>" + (a.status === "approved" ? "✓ Approved" : "✕ Rejected") + "</div>";
+      : "<div class='m-decided'><span class='stamp " + a.status + (a._justDecided ? " stamp-in" : "") + "'>" + (a.status === "approved" ? "Approved" : "Rejected") + "</span></div>";
+    a._justDecided = false; // consumed — later re-renders show the stamp static
     return "<div class='m-card' data-row='" + a.id + "'>" +
       "<div class='m-card-head'><div class='m-card-title'>" + a.title + "</div><span class='risk-pill " + a.risk + "'>" + a.risk + "</span></div>" +
       "<div class='m-card-meta'><span>" + a.agent + "</span><span>" + a.dept + "</span>" +
@@ -160,6 +162,7 @@
             await Aiven.decideApproval(a.id, decision);
           }
           a.status = decision;
+          a._justDecided = true;
           await Aiven.addAudit({ actor: "Human reviewer", model: "—", risk: a.risk,
             action: (a.status === "approved" ? "Approved: " : "Rejected: ") + a.title,
             detail: "Raised by " + a.agent + " · " + a.dept + " · decided via the mobile Approval companion." });

@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Governance Snapshot — Aiven Orchestrator</title>
 <meta name="description" content="A real, exportable governance bundle — policies, approvals, and the audit trail — formatted for an auditor or customer security review.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/shared.css">
 <style>
   .kpi-strip { grid-template-columns: repeat(4, 1fr); }
@@ -212,7 +215,10 @@
       .slice()
       .sort(function (a, b) { return new Date(b.requestedAt) - new Date(a.requestedAt); })
       .map(function (a) {
-        var statusLabel = a.status === "pending" ? "Pending" : a.status === "approved" ? "✓ Approved" : "✕ Rejected";
+        // A real, recorded decision — stamped, matching the rest of the
+        // console. Fitting doubly here: this is the one page meant to be
+        // printed as an actual document (window.print() below).
+        var statusLabel = a.status === "pending" ? "Pending" : "<span class='stamp " + a.status + "'>" + (a.status === "approved" ? "Approved" : "Rejected") + "</span>";
         return "<tr><td class='mono'>" + (a.requestedAt ? new Date(a.requestedAt).toLocaleDateString() : "—") + "</td>" +
           "<td class='name'>" + escapeHtml(a.title) + "</td><td>" + escapeHtml(a.agent) + "</td><td>" + escapeHtml(a.dept) + "</td>" +
           "<td><span class='risk-pill " + a.risk + "'>" + a.risk + "</span></td><td>" + statusLabel + "</td></tr>";

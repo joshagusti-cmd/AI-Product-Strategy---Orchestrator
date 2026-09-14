@@ -5,16 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Shadow AI Audit — Aiven Orchestrator</title>
 <meta name="description" content="Discover ungoverned AI tool use across the org, and decide whether to govern or kill it.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/shared.css">
 <style>
   .kpi-strip { grid-template-columns: repeat(4, 1fr); }
   .filters { margin: 18px 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
   td.name-cell { max-width: 42ch; }
   td.note-cell { max-width: 40ch; color: var(--text-mute); font-size: 11.5px; }
-  .decision-pill { font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 7px; border: 1px solid; display: inline-block; }
-  .decision-pill.govern { color: var(--success); border-color: var(--success); }
-  .decision-pill.kill { color: var(--critical); border-color: var(--critical); }
-  .decision-pill.undecided { color: var(--text-mute); border-color: var(--border); }
   .row-actions { display: flex; gap: 8px; }
   @media (max-width: 980px) { .kpi-strip { grid-template-columns: repeat(2, 1fr); } }
 </style>
@@ -231,7 +230,11 @@
           ? "<div class='row-actions'><button class='btn ghost approve small' data-id='" + t.id + "' data-decision='govern'>Govern</button>" +
             "<button class='btn ghost reject small' data-id='" + t.id + "' data-decision='kill'>Kill</button></div>"
           : "<span class='muted' style='font-size:11px;' title='Only admins and compliance owners can decide'>Awaiting compliance owner</span>")
-        : "<span class='decision-pill " + t.decision + "'>" + t.decision + "</span>";
+        // A real, recorded decision — stamped, not just colored. .stamp-in
+        // plays the stamp-hitting-paper animation once, only right after
+        // this specific decision (see t._justDecided below).
+        : "<span class='stamp " + t.decision + (t._justDecided ? " stamp-in" : "") + "'>" + (t.decision === "govern" ? "Governed" : "Killed") + "</span>";
+      t._justDecided = false; // consumed — later re-renders show the stamp static
       return "<tr><td class='name name-cell'>" + t.name + "</td><td>" + t.owner + "</td>" +
         "<td><span class='risk-pill " + t.risk + "'>" + t.risk + "</span></td><td>" + decisionCell + "</td>" +
         "<td class='note-cell'>" + t.note + "</td></tr>";
@@ -245,6 +248,7 @@
         try {
           await Aiven.decideShadowTool(t.id, decision);
           t.decision = decision;
+          t._justDecided = true;
           await Aiven.addAudit({ actor: "Compliance / Audit Agent", model: "—", risk: t.risk,
             action: (t.decision === "govern" ? "Governed shadow AI tool: " : "Killed shadow AI tool: ") + t.name,
             detail: "Owner: " + t.owner + "." });
