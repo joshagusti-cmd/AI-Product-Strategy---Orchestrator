@@ -260,6 +260,34 @@ function mergeRedactions(ctx: { redactions: Redaction[] }, found: Redaction[]) {
   }
 }
 
+// The Executive Writer's tool schema (FINAL_TOOL below) marks findings/
+// recommendations/riskFlags as required arrays, but a forced tool call
+// isn't a hard contract — a real, well-formed run can legitimately have
+// zero risk flags, or fewer findings than the "3-5" the prompt asks
+// for as a guideline, and the model sometimes reflects that by omitting
+// the key or returning something other than a clean array instead of
+// an empty one. That used to fail the entire run (discarding five
+// agents' worth of real, already-paid-for API calls) over what is
+// normal model variance, not a real error — these two helpers coerce
+// that variance into the empty/well-formed shape the rest of the
+// pipeline already expects, so only a genuinely unusable result (no
+// title/detail at all) still fails the run.
+function asStringArray(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0) : [];
+}
+function asRecommendations(v: unknown): Array<{ text: string; owner: string; nextStep: string; priority: string }> {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((r): r is Record<string, unknown> => !!r && typeof r === "object")
+    .map((r) => ({
+      text: typeof r.text === "string" ? r.text : "",
+      owner: typeof r.owner === "string" ? r.owner : "",
+      nextStep: typeof r.nextStep === "string" ? r.nextStep : "",
+      priority: typeof r.priority === "string" ? r.priority : "Medium",
+    }))
+    .filter((r) => r.text.trim().length > 0);
+}
+
 // Real prompt-injection screening on the objective — a real heuristic
 // pass, same honesty as redactSensitive above and computeAutoRoute
 // below: a deterministic pattern match for known override/extraction
@@ -1273,7 +1301,13 @@ async function runOneAgent(agent: PipelineAgent, ctx: RunCtx): Promise<AgentOutc
 
   if (isWriter) {
     const out = result.input || {};
-    if (!out.title || !out.detail || !Array.isArray(out.findings) || !Array.isArray(out.recommendations) || !Array.isArray(out.riskFlags)) {
+    if (!out.title || !out.detail) {
+      // Only title/detail are still fatal — they're what renders the
+      // writer's own pipeline step, so there's nothing usable to show
+      // without them. Logged with the full raw payload (not just "it
+      // failed") so a real recurrence is diagnosable from the log
+      // alone instead of guessing again.
+      console.error(`orchestrate: Executive Writer Agent returned an incomplete result`, JSON.stringify(out));
       throw new Error("Executive Writer Agent: returned an incomplete result.");
     }
     // Output redaction — the writer's synthesized deliverable is what a
@@ -1282,14 +1316,14 @@ async function runOneAgent(agent: PipelineAgent, ctx: RunCtx): Promise<AgentOutc
     // objective (input) already went through.
     const title = redactSensitive(out.title);
     const detail = redactSensitive(out.detail);
-    const executiveSummary = redactSensitive(out.executiveSummary || "");
-    const findings = (out.findings as string[]).map((f) => redactSensitive(f));
-    const recommendations = (out.recommendations as Array<{ text: string; owner: string; nextStep: string; priority: string }>).map((r) => ({
+    const executiveSummary = redactSensitive(typeof out.executiveSummary === "string" ? out.executiveSummary : "");
+    const findings = asStringArray(out.findings).map((f) => redactSensitive(f));
+    const recommendations = asRecommendations(out.recommendations).map((r) => ({
       ...r,
       text: redactSensitive(r.text).text,
       nextStep: redactSensitive(r.nextStep).text,
     }));
-    const riskFlags = (out.riskFlags as string[]).map((f) => redactSensitive(f));
+    const riskFlags = asStringArray(out.riskFlags).map((f) => redactSensitive(f));
     mergeRedactions(ctx, [
       ...title.redactions, ...detail.redactions, ...executiveSummary.redactions,
       ...findings.flatMap((f) => f.redactions), ...riskFlags.flatMap((f) => f.redactions),
