@@ -272,18 +272,81 @@ function mergeRedactions(ctx: { redactions: Redaction[] }, found: Redaction[]) {
 // that variance into the empty/well-formed shape the rest of the
 // pipeline already expects, so only a genuinely unusable result (no
 // title/detail at all) still fails the run.
-function asStringArray(v: unknown): string[] {
-  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0) : [];
+//
+// A second, more specific failure mode showed up in real production
+// traffic on a long, content-heavy synthesis: the model abandoned the
+// JSON tool schema partway through and wrote the REST of its answer —
+// findings, recommendations, and riskFlags, all of it — as one long
+// string crammed into whichever field it was still "inside" when it
+// switched over (almost always `findings`), using a plain <item>...
+// </item> tag convention, with a stray </findings>/<recommendations>/
+// <riskFlags> marking where each section actually starts. Seen twice
+// with the identical tag shape and real, high-quality content inside
+// it both times — discarding the run over that formatting slip throws
+// away exactly the synthesis a human asked for and already paid for.
+// extractTagItems/extractTagField/splitWriterBlob below recover it;
+// asStringArray/asRecommendations try the real array shape first and
+// fall back to parsing this tagged-blob shape only when the schema
+// itself wasn't honored.
+function extractTagItems(text: string): string[] {
+  const items: string[] = [];
+  const re = /<item>([\s\S]*?)<\/item>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const value = m[1].trim();
+    if (value) items.push(value);
+  }
+  return items;
 }
-function asRecommendations(v: unknown): Array<{ text: string; owner: string; nextStep: string; priority: string }> {
-  if (!Array.isArray(v)) return [];
-  return v
-    .filter((r): r is Record<string, unknown> => !!r && typeof r === "object")
-    .map((r) => ({
-      text: typeof r.text === "string" ? r.text : "",
-      owner: typeof r.owner === "string" ? r.owner : "",
-      nextStep: typeof r.nextStep === "string" ? r.nextStep : "",
-      priority: typeof r.priority === "string" ? r.priority : "Medium",
+
+function extractTagField(text: string, tag: string): string {
+  const m = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`).exec(text);
+  return m ? m[1].trim() : "";
+}
+
+// Splits a blob that may hold findings/recommendations/riskFlags all
+// concatenated behind one field (see comment above) into their three
+// raw text sections. A section that never shows up in the blob is "".
+function splitWriterBlob(raw: string): { findings: string; recommendations: string; riskFlags: string } {
+  const recoIdx = raw.indexOf("<recommendations>");
+  const riskIdx = raw.indexOf("<riskFlags>");
+  const findingsEnd = recoIdx !== -1 ? recoIdx : riskIdx !== -1 ? riskIdx : raw.length;
+  const findings = raw.slice(0, findingsEnd).replace(/<\/?findings>/g, "");
+  const recommendations = recoIdx !== -1 ? raw.slice(recoIdx, riskIdx !== -1 ? riskIdx : raw.length) : "";
+  const riskFlags = riskIdx !== -1 ? raw.slice(riskIdx) : "";
+  return { findings, recommendations, riskFlags };
+}
+
+function asStringArray(v: unknown, tagBlobFallback?: string): string[] {
+  if (Array.isArray(v)) return v.filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+  // Prefer the already-isolated blob section over the raw field itself:
+  // when a blob was detected, `v` may be the WHOLE collapsed blob (all
+  // three sections concatenated, if this is the field that carried it),
+  // not just this field's own content — scanning `v` directly in that
+  // case would pull in items that actually belong to a different field.
+  if (typeof tagBlobFallback === "string") return extractTagItems(tagBlobFallback);
+  return extractTagItems(typeof v === "string" ? v : "");
+}
+function asRecommendations(v: unknown, tagBlobFallback?: string): Array<{ text: string; owner: string; nextStep: string; priority: string }> {
+  if (Array.isArray(v)) {
+    return v
+      .filter((r): r is Record<string, unknown> => !!r && typeof r === "object")
+      .map((r) => ({
+        text: typeof r.text === "string" ? r.text : "",
+        owner: typeof r.owner === "string" ? r.owner : "",
+        nextStep: typeof r.nextStep === "string" ? r.nextStep : "",
+        priority: typeof r.priority === "string" ? r.priority : "Medium",
+      }))
+      .filter((r) => r.text.trim().length > 0);
+  }
+  // Same reasoning as asStringArray above: prefer the isolated section.
+  const raw = typeof tagBlobFallback === "string" ? tagBlobFallback : typeof v === "string" ? v : "";
+  return extractTagItems(raw)
+    .map((block) => ({
+      text: extractTagField(block, "text"),
+      owner: extractTagField(block, "owner"),
+      nextStep: extractTagField(block, "nextStep"),
+      priority: extractTagField(block, "priority") || "Medium",
     }))
     .filter((r) => r.text.trim().length > 0);
 }
@@ -1301,29 +1364,47 @@ async function runOneAgent(agent: PipelineAgent, ctx: RunCtx): Promise<AgentOutc
 
   if (isWriter) {
     const out = result.input || {};
-    if (!out.title || !out.detail) {
-      // Only title/detail are still fatal — they're what renders the
-      // writer's own pipeline step, so there's nothing usable to show
-      // without them. Logged with the full raw payload (not just "it
-      // failed") so a real recurrence is diagnosable from the log
-      // alone instead of guessing again.
-      console.error(`orchestrate: Executive Writer Agent returned an incomplete result`, JSON.stringify(out));
-      throw new Error("Executive Writer Agent: returned an incomplete result.");
-    }
-    // Output redaction — the writer's synthesized deliverable is what a
-    // human actually reads and what gets archived/exported, so every
-    // text field it can carry PII/secrets in gets the same real pass the
-    // objective (input) already went through.
-    const title = redactSensitive(out.title);
-    const detail = redactSensitive(out.detail);
-    const executiveSummary = redactSensitive(typeof out.executiveSummary === "string" ? out.executiveSummary : "");
-    const findings = asStringArray(out.findings).map((f) => redactSensitive(f));
-    const recommendations = asRecommendations(out.recommendations).map((r) => ({
+    // Whichever of the three array fields actually carries the tagged
+    // blob (see splitWriterBlob above) — almost always `findings`, since
+    // that's the first array field in the schema and where the model
+    // was still "inside" when it abandoned the JSON structure. Checked
+    // defensively across all three in case that ever shifts.
+    const blobCandidate = [out.findings, out.recommendations, out.riskFlags]
+      .find((v): v is string => typeof v === "string" && (v.includes("<item>") || v.includes("<recommendations>") || v.includes("<riskFlags>")));
+    const blob = blobCandidate ? splitWriterBlob(blobCandidate) : null;
+
+    const findings = asStringArray(out.findings, blob?.findings).map((f) => redactSensitive(f));
+    const recommendations = asRecommendations(out.recommendations, blob?.recommendations).map((r) => ({
       ...r,
       text: redactSensitive(r.text).text,
       nextStep: redactSensitive(r.nextStep).text,
     }));
-    const riskFlags = asStringArray(out.riskFlags).map((f) => redactSensitive(f));
+    const riskFlags = asStringArray(out.riskFlags, blob?.riskFlags).map((f) => redactSensitive(f));
+    const executiveSummaryRaw = typeof out.executiveSummary === "string" ? out.executiveSummary : "";
+
+    // title/detail are what render the writer's own pipeline step, but a
+    // missing one no longer scraps a run that clearly produced real
+    // content elsewhere (this is exactly the shape of the tagged-blob
+    // failure above: the model skipped `title` entirely once it fell out
+    // of the schema) — fall back to deriving something reasonable from
+    // what IS there instead. Only fail when there's truly nothing usable
+    // anywhere, logged with the full raw payload so a real recurrence is
+    // diagnosable from the log alone instead of guessing again.
+    const hasContent = !!(out.title || out.detail || executiveSummaryRaw || findings.length || recommendations.length || riskFlags.length);
+    if (!hasContent) {
+      console.error(`orchestrate: Executive Writer Agent returned an incomplete result`, JSON.stringify(out));
+      throw new Error("Executive Writer Agent: returned an incomplete result.");
+    }
+    const titleRaw = typeof out.title === "string" && out.title.trim() ? out.title : "Synthesizes findings into an executive brief";
+    const detailRaw = typeof out.detail === "string" && out.detail.trim() ? out.detail : (executiveSummaryRaw || titleRaw);
+
+    // Output redaction — the writer's synthesized deliverable is what a
+    // human actually reads and what gets archived/exported, so every
+    // text field it can carry PII/secrets in gets the same real pass the
+    // objective (input) already went through.
+    const title = redactSensitive(titleRaw);
+    const detail = redactSensitive(detailRaw);
+    const executiveSummary = redactSensitive(executiveSummaryRaw);
     mergeRedactions(ctx, [
       ...title.redactions, ...detail.redactions, ...executiveSummary.redactions,
       ...findings.flatMap((f) => f.redactions), ...riskFlags.flatMap((f) => f.redactions),
