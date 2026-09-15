@@ -74,19 +74,69 @@
   .grid-two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 18px; align-items: start; }
 
   /* ---------- agent network ---------- */
-  #network-wrap { position: relative; height: 300px; }
+  #network-wrap {
+    position: relative; height: 420px;
+    background: radial-gradient(ellipse 58% 52% at 50% 50%, var(--accent-soft), transparent 70%);
+  }
   #network { width: 100%; height: 100%; display: block; }
-  .agent-label {
-    position: absolute; transform: translate(-50%, -50%); text-align: center; pointer-events: none;
-    width: 108px;
+
+  .agent-label { position: absolute; transform: translate(-50%, -50%); z-index: 5; }
+  .agent-label.open { z-index: 30; }
+
+  .agent-chip {
+    display: flex; align-items: center; gap: 7px; cursor: pointer;
+    width: 192px; padding: 6px 10px;
+    background: var(--surface); border: 1px solid var(--border-soft);
+    transition: border-color .15s, box-shadow .15s, transform .15s;
   }
-  .agent-label .n { font-family: var(--mono); font-size: 10.5px; font-weight: 600; color: var(--text); white-space: nowrap; }
-  .agent-label .m { font-family: var(--mono); font-size: 9px; color: var(--text-mute); margin-top: 1px; }
+  .agent-chip .dot {
+    width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; background: var(--text-mute);
+    transition: background .2s, box-shadow .2s;
+  }
+  .agent-label[data-state="running"] .agent-chip .dot { background: var(--running); box-shadow: 0 0 6px var(--running); }
+  .agent-label[data-state="done"] .agent-chip .dot { background: var(--success); }
+  .agent-chip .txt { min-width: 0; }
+  .agent-chip .n {
+    font-family: var(--mono); font-size: 11.5px; font-weight: 600; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .agent-chip .m {
+    font-family: var(--mono); font-size: 9px; color: var(--text-mute); margin-top: 1px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .agent-label:hover .agent-chip, .agent-label:focus-within .agent-chip, .agent-label.pinned .agent-chip {
+    border-color: var(--accent-dim); box-shadow: 0 0 0 1px var(--accent-dim); transform: translateY(-2px);
+  }
+  .agent-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #network-wrap.dimming .agent-label:not(.open) .agent-chip { opacity: 0.5; }
+
+  .agent-card {
+    position: absolute; width: 224px; z-index: 25;
+    background: var(--surface-raised); border: 1px solid var(--border);
+    padding: 11px 13px; box-shadow: 0 14px 32px rgba(0, 0, 0, 0.4);
+    opacity: 0; pointer-events: none; transform: scale(0.95);
+    transition: opacity .14s ease, transform .14s ease;
+  }
+  .place-below .agent-card { top: calc(100% + 10px); transform-origin: center top; }
+  .place-above .agent-card { bottom: calc(100% + 10px); transform-origin: center bottom; }
+  .place-center .agent-card { left: 50%; margin-left: -112px; }
+  .place-left .agent-card { right: -8px; }
+  .place-right .agent-card { left: -8px; }
+  .agent-label:hover .agent-card, .agent-label:focus-within .agent-card, .agent-label.pinned .agent-card {
+    opacity: 1; pointer-events: auto; transform: scale(1);
+  }
+  .card-role { font-size: 11.5px; color: var(--text-dim); line-height: 1.4; padding-bottom: 9px; border-bottom: 1px solid var(--border-soft); }
+  .card-field { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 9px; }
+  .card-field span { font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-mute); }
   .agent-model-select {
-    pointer-events: auto; margin-top: 3px; font-family: var(--mono); font-size: 9px;
+    font-family: var(--mono); font-size: 10.5px; max-width: 140px;
     background: var(--surface-sunken); color: var(--text-dim); border: 1px solid var(--border-soft);
-    padding: 1px 3px; width: 100%;
+    padding: 2px 4px;
   }
+  .card-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 10px; }
+  .card-stats div { display: flex; flex-direction: column; gap: 2px; }
+  .card-stats span { font-family: var(--mono); font-size: 9px; color: var(--text-mute); }
+  .card-stats b { font-family: var(--mono); font-size: 12px; color: var(--text); font-weight: 600; }
 
   /* ---------- timeline ---------- */
   .ambient-list { padding: 10px 18px; border-bottom: 1px solid var(--border-soft); display: flex; flex-direction: column; gap: 8px; }
@@ -695,6 +745,9 @@
   var dpr = Math.max(1, window.devicePixelRatio || 1);
   var activeAgentIds = [];
   var pulseT = 0;
+  var ringT = 0;
+  var hoveredAgentId = null;
+  var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   function cssVar(name) {
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -710,17 +763,81 @@
   }
 
   var labelEls = {};
+
+  function closeAllLabels(except) {
+    Object.keys(labelEls).forEach(function (id) {
+      if (id === except) return;
+      var el = labelEls[id];
+      el.classList.remove("pinned", "open");
+      el.setAttribute("aria-expanded", "false");
+    });
+  }
+
   function buildLabels() {
     wrap.querySelectorAll(".agent-label").forEach(function (n) { n.remove(); });
     AGENTS.forEach(function (a) {
+      var p = perfBase[a.id];
       var d = document.createElement("div");
-      d.className = "agent-label";
-      d.innerHTML = "<div class='n'>" + a.name + "</div><div class='m'>" + a.role + "</div>" +
-        "<select class='agent-model-select' data-agent='" + a.id + "'>" +
-        MODELS.map(function (m) { return "<option" + (m === a.model ? " selected" : "") + ">" + m + "</option>"; }).join("") + "</select>";
+      var vert = a.y <= 0.5 ? "place-below" : "place-above";
+      var horiz = a.x < 0.4 ? "place-right" : a.x > 0.6 ? "place-left" : "place-center";
+      d.className = "agent-label " + vert + " " + horiz;
+      d.tabIndex = 0;
+      d.setAttribute("role", "button");
+      d.setAttribute("aria-expanded", "false");
+      d.setAttribute("aria-label", a.name + " — " + a.role + ". Activate for details and to reassign its model.");
+      d.innerHTML =
+        "<div class='agent-chip'><span class='dot'></span><div class='txt'><div class='n'>" + a.name + "</div><div class='m'>" + a.role + "</div></div></div>" +
+        "<div class='agent-card'>" +
+          "<div class='card-role'>" + a.role + "</div>" +
+          "<div class='card-field'><span>Model</span><select class='agent-model-select' data-agent='" + a.id + "'>" +
+            MODELS.map(function (m) { return "<option" + (m === a.model ? " selected" : "") + ">" + m + "</option>"; }).join("") +
+          "</select></div>" +
+          "<div class='card-stats'>" +
+            "<div><span>Tasks · 30d</span><b>" + p.tasks + "</b></div>" +
+            "<div><span>Success</span><b>" + p.success + "%</b></div>" +
+            "<div><span>Latency</span><b>" + p.latency + "</b></div>" +
+            "<div><span>Avg cost</span><b>" + p.cost + "</b></div>" +
+          "</div>" +
+        "</div>";
       wrap.appendChild(d);
       labelEls[a.id] = d;
-      d.querySelector("select").addEventListener("change", function (e) {
+
+      function open() {
+        d.classList.add("open");
+        d.setAttribute("aria-expanded", "true");
+        hoveredAgentId = a.id;
+        wrap.classList.add("dimming");
+        drawNetwork();
+      }
+      function close() {
+        if (d.classList.contains("pinned")) return;
+        d.classList.remove("open");
+        d.setAttribute("aria-expanded", "false");
+        if (hoveredAgentId === a.id) hoveredAgentId = null;
+        wrap.classList.toggle("dimming", !!hoveredAgentId);
+        drawNetwork();
+      }
+
+      d.addEventListener("mouseenter", open);
+      d.addEventListener("mouseleave", close);
+      d.addEventListener("focusin", open);
+      d.addEventListener("focusout", function (e) { if (!d.contains(e.relatedTarget)) close(); });
+      d.querySelector(".agent-chip").addEventListener("click", function (e) {
+        e.stopPropagation();
+        var wasPinned = d.classList.contains("pinned");
+        closeAllLabels(a.id);
+        if (wasPinned) {
+          d.classList.remove("pinned");
+          close();
+        } else {
+          d.classList.add("pinned");
+          open();
+        }
+      });
+
+      var sel = d.querySelector("select");
+      sel.addEventListener("click", function (e) { e.stopPropagation(); });
+      sel.addEventListener("change", function (e) {
         a.model = e.target.value;
         renderPerfTable();
         toast(a.name + " reassigned to " + e.target.value + " — governance policy re-evaluated");
@@ -728,14 +845,40 @@
     });
     applyAutoRouteState();
   }
+
+  document.addEventListener("click", function (e) {
+    if (e.target.closest(".agent-label")) return;
+    closeAllLabels();
+    hoveredAgentId = null;
+    wrap.classList.remove("dimming");
+    drawNetwork();
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    closeAllLabels();
+    hoveredAgentId = null;
+    wrap.classList.remove("dimming");
+    drawNetwork();
+    document.activeElement && document.activeElement.blur();
+  });
+
   function positionLabels() {
     var r = wrap.getBoundingClientRect();
     AGENTS.forEach(function (a) {
       var d = labelEls[a.id];
       if (!d) return;
       d.style.left = (a.x * r.width) + "px";
-      var yOff = a.y < 0.2 ? -34 : a.y > 0.8 ? 34 : 0;
+      var yOff = a.y < 0.2 ? -26 : a.y > 0.8 ? 26 : 0;
       d.style.top = (a.y * r.height + yOff) + "px";
+    });
+  }
+
+  function syncLabelStates() {
+    AGENTS.forEach(function (a) {
+      var d = labelEls[a.id];
+      if (!d) return;
+      var state = activeAgentIds.indexOf(a.id) !== -1 ? "running" : (a.status === "done" ? "done" : "idle");
+      if (d.dataset.state !== state) d.dataset.state = state;
     });
   }
 
@@ -749,18 +892,35 @@
     var success = cssVar("--success") || "#43c08c";
     var accent = cssVar("--accent") || "#e7a838";
     var textMute = cssVar("--text-mute") || "#7d879c";
+    var surface = cssVar("--surface") || "#121a29";
 
     var hub = { x: HUB.x * r.width, y: HUB.y * r.height };
+    var maxR = Math.min(r.width, r.height) * 0.46;
 
-    // edges
+    // radar backdrop — reads as a real topology surface, not empty space
+    [0.32, 0.64, 1].forEach(function (f) {
+      ctx.beginPath();
+      ctx.arc(hub.x, hub.y, maxR * f, 0, Math.PI * 2);
+      ctx.strokeStyle = border;
+      ctx.globalAlpha = 0.4;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    });
+    ctx.globalAlpha = 1;
+
+    // edges (dim non-hovered ones once something is focused, for real spotlight contrast)
     AGENTS.forEach(function (a) {
       var p = { x: a.x * r.width, y: a.y * r.height };
       var isActive = activeAgentIds.indexOf(a.id) !== -1;
+      var isHover = hoveredAgentId === a.id;
+      var dimmed = hoveredAgentId && !isHover;
+      ctx.save();
+      ctx.globalAlpha = dimmed ? 0.25 : 1;
       ctx.beginPath();
       ctx.moveTo(hub.x, hub.y);
       ctx.lineTo(p.x, p.y);
-      ctx.strokeStyle = isActive ? running : border;
-      ctx.lineWidth = isActive ? 1.6 : 1;
+      ctx.strokeStyle = isHover ? accent : (isActive ? running : border);
+      ctx.lineWidth = isHover ? 2 : (isActive ? 1.6 : 1);
       ctx.stroke();
 
       if (isActive) {
@@ -772,48 +932,71 @@
         ctx.fillStyle = running;
         ctx.fill();
       }
+      ctx.restore();
     });
 
-    // hub
+    // hub — soft glow core + a slow-rotating dashed orbit ring signalling "live"
     ctx.beginPath();
-    ctx.arc(hub.x, hub.y, 15, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(231,168,56,0.12)";
+    ctx.arc(hub.x, hub.y, 17, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(231,168,56,0.14)";
     ctx.fill();
     ctx.beginPath();
-    ctx.arc(hub.x, hub.y, 9, 0, Math.PI * 2);
+    ctx.arc(hub.x, hub.y, 10, 0, Math.PI * 2);
     ctx.fillStyle = accent;
     ctx.fill();
+
+    ctx.save();
+    ctx.translate(hub.x, hub.y);
+    ctx.rotate((ringT % 360) * Math.PI / 180);
+    ctx.setLineDash([3, 6]);
     ctx.beginPath();
-    ctx.arc(hub.x, hub.y, 15, 0, Math.PI * 2);
+    ctx.arc(0, 0, 24, 0, Math.PI * 2);
     ctx.strokeStyle = accent;
+    ctx.globalAlpha = 0.6;
     ctx.lineWidth = 1;
     ctx.stroke();
+    ctx.restore();
 
-    // agent nodes
+    // agent nodes — bigger, with a glow that answers hover/active/done state
     AGENTS.forEach(function (a) {
       var p = { x: a.x * r.width, y: a.y * r.height };
       var isActive = activeAgentIds.indexOf(a.id) !== -1;
       var isDone = a.status === "done";
-      var color = isDone ? success : isActive ? running : textMute;
+      var isHover = hoveredAgentId === a.id;
+      var dimmed = hoveredAgentId && !isHover;
+      var color = isDone ? success : isActive ? running : (isHover ? accent : textMute);
+      var radius = isHover ? 10 : 8;
+
+      ctx.save();
+      ctx.globalAlpha = dimmed ? 0.4 : 1;
+      if (isActive || isDone || isHover) {
+        ctx.shadowBlur = isHover ? 16 : 9;
+        ctx.shadowColor = color;
+      }
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
-      ctx.fillStyle = cssVar("--surface") || "#121a29";
+      ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = surface;
       ctx.fill();
-      ctx.lineWidth = isActive || isDone ? 1.8 : 1;
+      ctx.lineWidth = isHover ? 2.4 : (isActive || isDone ? 1.8 : 1);
       ctx.strokeStyle = color;
       ctx.stroke();
-      if (isActive) {
+      ctx.shadowBlur = 0;
+      if (isActive || isHover) {
         ctx.beginPath();
-        ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, isHover ? 4 : 3, 0, Math.PI * 2);
         ctx.fillStyle = color;
         ctx.fill();
       }
+      ctx.restore();
     });
+
+    syncLabelStates();
   }
 
   var rafId = null;
   function animateNetwork() {
     pulseT += 1.4;
+    ringT += 0.18;
     drawNetwork();
     rafId = requestAnimationFrame(animateNetwork);
   }
@@ -823,7 +1006,7 @@
   sizeCanvas();
   window.addEventListener("resize", sizeCanvas);
   new MutationObserver(drawNetwork).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+  if (!reducedMotion) {
     animateNetwork();
   } else {
     drawNetwork();
