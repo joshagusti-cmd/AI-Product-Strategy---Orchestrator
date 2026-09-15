@@ -85,7 +85,7 @@
 
   .agent-chip {
     display: flex; align-items: center; gap: 7px; cursor: pointer;
-    width: 192px; padding: 6px 10px;
+    width: var(--chip-w, 192px); padding: 6px 10px;
     background: var(--surface); border: 1px solid var(--border-soft);
     transition: border-color .15s, box-shadow .15s, transform .15s;
   }
@@ -679,14 +679,44 @@
   // either falls back to that agent's Claude default and shows a toast
   // naming the substitution after the run.
   var AGENTS = [
-    { id: "research", name: "Research & Data Agent", model: "Claude Sonnet 5", role: "Pulls and reconciles data across connected systems", x: 0.18, y: 0.28 },
-    { id: "finance", name: "Finance Agent", model: "Claude Sonnet 5", role: "Analyzes cost structure, margin, and variance", x: 0.18, y: 0.74 },
-    { id: "ops", name: "Operations Agent", model: "Claude Sonnet 5", role: "Maps process cycle times and bottlenecks", x: 0.5, y: 0.88 },
-    { id: "risk", name: "Risk & Compliance Agent", model: "Claude Opus 4.8", role: "Screens findings against governance policy", x: 0.82, y: 0.74 },
-    { id: "strategy", name: "Strategy Agent", model: "Claude Sonnet 5", role: "Synthesizes findings into prioritized recommendations", x: 0.82, y: 0.28 },
-    { id: "writer", name: "Executive Writer Agent", model: "Claude Sonnet 5", role: "Drafts the executive-ready action plan", x: 0.5, y: 0.12 }
+    { id: "research", name: "Research & Data Agent", model: "Claude Sonnet 5", role: "Pulls and reconciles data across connected systems" },
+    { id: "finance", name: "Finance Agent", model: "Claude Sonnet 5", role: "Analyzes cost structure, margin, and variance" },
+    { id: "ops", name: "Operations Agent", model: "Claude Sonnet 5", role: "Maps process cycle times and bottlenecks" },
+    { id: "risk", name: "Risk & Compliance Agent", model: "Claude Opus 4.8", role: "Screens findings against governance policy" },
+    { id: "strategy", name: "Strategy Agent", model: "Claude Sonnet 5", role: "Synthesizes findings into prioritized recommendations" },
+    { id: "writer", name: "Executive Writer Agent", model: "Claude Sonnet 5", role: "Drafts the executive-ready action plan" }
   ];
   var HUB = { x: 0.5, y: 0.5 };
+
+  // The diagram's clock position for each agent — kept separate from
+  // AGENTS' own declaration order (which the performance table below
+  // still follows) so reordering one never reshuffles the other. Index
+  // 0 sits at 12 o'clock, then clockwise; this is today's arrangement,
+  // preserved as-is. Any agent id not listed here (a new one added to
+  // AGENTS without a slot picked for it) is appended automatically —
+  // it still gets a spot on the ring, just at the end.
+  var RING_ORDER = ["writer", "strategy", "risk", "ops", "finance", "research"];
+
+  // Every agent's (x, y) is computed here, not hand-placed — a 7th+
+  // agent just takes a slot on the ring, no per-agent coordinates to
+  // tune. One shared radius fraction against this panel's wide-short
+  // box already draws an ellipse rather than a circle, same as the
+  // original hand-placed coordinates did. The radius nudges outward a
+  // little as more agents join, so a denser ring still has room to
+  // breathe.
+  function layoutAgents() {
+    var order = RING_ORDER.filter(function (id) { return AGENTS.some(function (a) { return a.id === id; }); });
+    AGENTS.forEach(function (a) { if (order.indexOf(a.id) === -1) order.push(a.id); });
+    var n = order.length;
+    var radius = Math.min(0.40, 0.30 + Math.max(0, n - 6) * 0.012);
+    order.forEach(function (id, i) {
+      var a = AGENTS.find(function (x) { return x.id === id; });
+      var angle = (-90 + (360 / n) * i) * Math.PI / 180;
+      a.x = HUB.x + radius * Math.cos(angle);
+      a.y = HUB.y + radius * Math.sin(angle);
+    });
+  }
+  layoutAgents();
 
   var perfBase = {
     research: { tasks: 214, success: 98.1, latency: "6.2s", cost: "$0.09", trend: "up" },
@@ -775,6 +805,9 @@
 
   function buildLabels() {
     wrap.querySelectorAll(".agent-label").forEach(function (n) { n.remove(); });
+    // A denser ring gets narrower chips so neighboring agents don't
+    // crowd into each other as more get added.
+    wrap.style.setProperty("--chip-w", Math.max(128, 192 - Math.max(0, AGENTS.length - 6) * 12) + "px");
     AGENTS.forEach(function (a) {
       var p = perfBase[a.id];
       var d = document.createElement("div");
@@ -844,6 +877,7 @@
       });
     });
     applyAutoRouteState();
+    positionLabels();
   }
 
   document.addEventListener("click", function (e) {
@@ -862,14 +896,37 @@
     document.activeElement && document.activeElement.blur();
   });
 
+  // Pushes every chip outward from its node, along that node's own
+  // hub-to-node line — not just the top/bottom ones, which is why the
+  // canvas dot used to be fully hidden under the chip for the four
+  // diagonal agents (they had no offset at all). The push distance is
+  // computed per chip from its own rendered width/height, not a flat
+  // number: a flat gap only needs to clear a chip's short *height* for
+  // an agent pushed straight up/down, but has to clear its much wider
+  // *width* for one pushed mostly sideways — using one number for both
+  // either crowds the diagonal agents or over-spaces the top/bottom
+  // ones. This also self-adjusts if a future agent lands somewhere the
+  // current six don't (e.g. nearly due east/west on a denser ring).
+  var LABEL_MARGIN = 12;
   function positionLabels() {
     var r = wrap.getBoundingClientRect();
+    var hubX = HUB.x * r.width, hubY = HUB.y * r.height;
     AGENTS.forEach(function (a) {
       var d = labelEls[a.id];
       if (!d) return;
-      d.style.left = (a.x * r.width) + "px";
-      var yOff = a.y < 0.2 ? -26 : a.y > 0.8 ? 26 : 0;
-      d.style.top = (a.y * r.height + yOff) + "px";
+      var chip = d.querySelector(".agent-chip");
+      var halfW = chip.offsetWidth / 2, halfH = chip.offsetHeight / 2;
+      var nodeX = a.x * r.width, nodeY = a.y * r.height;
+      var dx = nodeX - hubX, dy = nodeY - hubY;
+      var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      var ux = dx / dist, uy = dy / dist;
+      // Distance from the chip's own center to its edge along this
+      // exact direction — so the chip's near edge clears the node by
+      // LABEL_MARGIN whether the node sits above/below or off to the side.
+      var edgeDist = 1 / Math.max(Math.abs(ux) / halfW, Math.abs(uy) / halfH);
+      var offset = edgeDist + LABEL_MARGIN;
+      d.style.left = (nodeX + ux * offset) + "px";
+      d.style.top = (nodeY + uy * offset) + "px";
     });
   }
 
