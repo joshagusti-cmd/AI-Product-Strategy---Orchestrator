@@ -1265,7 +1265,7 @@
       await Aiven.decideApproval(a.id, decision);
       toast("Approval " + decision + " — recorded to audit trail");
       await Aiven.addAudit({
-        actor: "Human reviewer", risk: a.risk, model: "—",
+        actor: "Human reviewer", risk: a.risk, model: "—", approvalId: a.id,
         action: (decision === "approved" ? "Approved: " : "Rejected: ") + a.title,
         detail: "Decided via the Command Center's live-run approval panel."
       }).catch(function (e) { console.error("Failed to log audit entry", e); });
@@ -1532,7 +1532,7 @@
     }
 
     Aiven.addAudit({
-      actor: "Executive Writer Agent", model: response.model || AGENTS[5].model, risk: "—",
+      actor: "Executive Writer Agent", model: response.model || AGENTS[5].model, risk: "—", agentId: AGENTS[5].id,
       action: "Drafted the executive action plan for: “" + objective + "”",
       detail: response.resumedApprovalId
         ? "Real Claude orchestration run, resumed after policy approval. Deliverable compiled and staged for executive review. See Audit Trail for the full log."

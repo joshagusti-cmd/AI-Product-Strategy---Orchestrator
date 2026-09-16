@@ -247,7 +247,7 @@
         try {
           await Aiven.updateAgentModel(agent.id, sel.value);
           agent.model = sel.value;
-          await Aiven.addAudit({ actor: "Orchestrator Core", model: agent.model, risk: "—",
+          await Aiven.addAudit({ actor: "Orchestrator Core", model: agent.model, risk: "—", agentId: agent.id,
             action: "Reassigned " + agent.name + " from " + old + " to " + agent.model,
             detail: "Governance policy re-evaluated automatically after model swap." });
           Aiven.toast(agent.name + " reassigned to " + agent.model + " — governance policy re-evaluated");
@@ -268,7 +268,7 @@
         try {
           await Aiven.setAgentEnabled(agent.id, enabled);
           agent.enabled = enabled;
-          await Aiven.addAudit({ actor: "Orchestrator Core", model: "—", risk: "—",
+          await Aiven.addAudit({ actor: "Orchestrator Core", model: "—", risk: "—", agentId: agent.id,
             action: (enabled ? "Enabled " : "Disabled ") + agent.name + " in the real Orchestrate pipeline",
             detail: enabled ? "Will run on the next real Orchestrate call." : "Removed from the next real Orchestrate call, without deleting the registry row." });
           Aiven.toast(agent.name + (enabled ? " enabled" : " disabled") + " in the real pipeline");
@@ -288,7 +288,7 @@
         btn.disabled = true;
         try {
           var result = await Aiven.regenerateExternalAgentKey(agent.id);
-          await Aiven.addAudit({ actor: "Orchestrator Core", model: "—", risk: "—",
+          await Aiven.addAudit({ actor: "Orchestrator Core", model: "—", risk: "—", agentId: agent.id,
             action: "Regenerated API key for external agent " + agent.name,
             detail: "The previous key stopped working immediately." });
           showKeyModal(agent, result);
@@ -311,6 +311,8 @@
           await Aiven.addAudit({ actor: "Orchestrator Core", model: "—", risk: "—",
             action: "Removed external agent " + agent.name,
             detail: "Its API key was revoked immediately." });
+          // Not agentId: agent.id here — that row is already gone from the
+          // registry by this point, so a link to it would be dead on arrival.
           Aiven.toast(agent.name + " removed");
           renderFilters();
           renderKpis();
@@ -385,7 +387,7 @@
       try {
         var result = await Aiven.registerExternalAgent({ name: name, dept: dept, note: note });
         state.agents.push(result.agent);
-        await Aiven.addAudit({ actor: "Orchestrator Core", model: "—", risk: "—",
+        await Aiven.addAudit({ actor: "Orchestrator Core", model: "—", risk: "—", agentId: result.agent.id,
           action: "Registered external agent " + name,
           detail: "A real API key and endpoint were issued for it to report its own activity." });
         Aiven.toast(name + " added — save its API key now");

@@ -168,7 +168,8 @@
     };
   }
   function mapAudit(row) {
-    return { ts: row.ts, actor: row.actor, action: row.action, model: row.model, risk: row.risk, detail: row.detail };
+    return { ts: row.ts, actor: row.actor, action: row.action, model: row.model, risk: row.risk, detail: row.detail,
+      agentId: row.agent_id, approvalId: row.approval_id };
   }
 
   // Best-effort agent lookup by exact display name — lets a page cross-
@@ -388,7 +389,12 @@
     requireOwnWorkspace();
     var r = await sb.from("audit_log").insert({
       workspace_id: currentWorkspaceId, actor: entry.actor, action: entry.action, model: entry.model || null,
-      risk: entry.risk && entry.risk !== "—" ? entry.risk : null, detail: entry.detail || null
+      risk: entry.risk && entry.risk !== "—" ? entry.risk : null, detail: entry.detail || null,
+      // Best-effort pointer back to the one agent or approval this entry
+      // is actually about — set only by call sites that genuinely have
+      // one (see agents.html/approvals.html/index.html); left null for
+      // system/workspace-level entries, same as every other field here.
+      agent_id: entry.agentId || null, approval_id: entry.approvalId || null
     });
     if (r.error) throw r.error;
   }

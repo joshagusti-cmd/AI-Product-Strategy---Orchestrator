@@ -195,7 +195,7 @@
           }
           a.status = decision;
           a._justDecided = true; // plays the stamp animation once on this row's next render only
-          await Aiven.addAudit({ actor: "Human reviewer", model: "—", risk: a.risk,
+          await Aiven.addAudit({ actor: "Human reviewer", model: "—", risk: a.risk, approvalId: a.id,
             action: (a.status === "approved" ? "Approved: " : "Rejected: ") + a.title,
             detail: "Raised by " + a.agent + " · " + a.dept + " · decided via the Approval Queue." });
           Aiven.toast("Request " + a.status + " — recorded to audit trail");
@@ -210,12 +210,12 @@
             // content into the shared archive, and rejecting keeps it
             // held back there for good.
             if (decision === "approved") {
-              await Aiven.addAudit({ actor: "Orchestrator Core", model: "—", risk: "—",
+              await Aiven.addAudit({ actor: "Orchestrator Core", model: "—", risk: "—", approvalId: a.id,
                 action: "Released for distribution: " + a.title,
                 detail: "Gate 2 (Two-gate autonomy) cleared — now visible in Workflow History." });
               Aiven.toast("Released — now visible in Workflow History.");
             } else {
-              await Aiven.addAudit({ actor: "Orchestrator Core", model: "—", risk: "—",
+              await Aiven.addAudit({ actor: "Orchestrator Core", model: "—", risk: "—", approvalId: a.id,
                 action: "Release rejected, held back: " + a.title,
                 detail: "Gate 2 (Two-gate autonomy) — the generated deliverable stays out of Workflow History." });
             }
@@ -239,7 +239,7 @@
                   Aiven.toast(res.releaseApprovalId
                     ? "Run resumed — deliverable generated, now held for a second release approval (Two-gate)."
                     : "Run resumed — executive deliverable generated. See the workspace's Audit Trail.");
-                  await Aiven.addAudit({ actor: "Orchestrator Core", model: res.model, risk: "—",
+                  await Aiven.addAudit({ actor: "Orchestrator Core", model: res.model, risk: "—", approvalId: a.id,
                     action: "Resumed paused run and generated executive deliverable: " + a.title,
                     detail: "Strategy + Writer calls completed after approval via the Approval Queue." });
                 }
@@ -247,7 +247,7 @@
                 Aiven.toast("Approved, but couldn't resume the run: " + e.message);
               }
             } else {
-              await Aiven.addAudit({ actor: "Orchestrator Core", model: "—", risk: a.risk,
+              await Aiven.addAudit({ actor: "Orchestrator Core", model: "—", risk: a.risk, approvalId: a.id,
                 action: "Run terminated by rejection: " + a.title,
                 detail: "No further Claude calls were made — Strategy and Writer never ran." });
             }
