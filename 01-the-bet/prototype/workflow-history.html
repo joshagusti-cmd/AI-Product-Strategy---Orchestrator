@@ -281,7 +281,7 @@
       var status = (r.was_paused
         ? "<span class='paused-pill'>Paused → resumed</span>"
         : "<span class='muted' style='font-size:11px;'>Completed</span>") +
-        (isReleased(r) ? "" : "<span class='release-pill'>Pending release</span>");
+        (isReleased(r) ? "" : "<span class='release-pill' title='Generated, but held for a second release approval (Two-gate) - decide it in the Approval Queue to release it here.'>Pending release</span>");
       // r.id is a real Postgres bigint (orchestrate_runs.id), which
       // supabase-js/PostgREST deserializes as a JS number; openId and
       // selectedIds always hold strings (read from a DOM data-id
@@ -332,7 +332,7 @@
     var status = (r.was_paused
       ? "<span class='paused-pill'>Paused → resumed</span>"
       : "<span class='muted' style='font-size:11px;'>Completed</span>") +
-      (isReleased(r) ? "" : "<span class='release-pill'>Pending release</span>");
+      (isReleased(r) ? "" : "<span class='release-pill' title='Generated, but held for a second release approval (Two-gate) - decide it in the Approval Queue to release it here.'>Pending release</span>");
     return "<div class='compare-col'>" +
       "<div class='compare-col-head'>" +
       "<div class='obj'>" + r.objective + "</div>" +
