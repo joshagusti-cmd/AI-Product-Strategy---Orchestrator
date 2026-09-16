@@ -162,6 +162,19 @@
     document.getElementById("kpi-depts").textContent = Object.keys(depts).length;
   }
 
+  // A Status pill links to the Approval Queue only when there's a real
+  // pending approval raised by this agent (exact name match, same as
+  // the reverse link approvals.html already draws back here) — a
+  // "Review" status with nothing actually pending wouldn't have
+  // anywhere real to send the click.
+  function statusCell(a) {
+    var pill = "<span class='status-pill " + a.status + "'><span class='dot'></span>" + a.status + "</span>";
+    var hasPending = (state.approvals || []).some(function (ap) { return ap.status === "pending" && ap.agent === a.name; });
+    return hasPending
+      ? "<a class='status-pill-link' href='approvals.html?agent=" + encodeURIComponent(a.id) + "' title='View in the Approval Queue'>" + pill + "</a>"
+      : pill;
+  }
+
   function renderTable() {
     var rows = state.agents.filter(function (a) {
       return (activeTier === "All" || a.tier === activeTier) && (activeDept === "All" || a.dept === activeDept);
@@ -220,7 +233,7 @@
         "<td><span class='tier-pill " + a.tier + "'>" + a.tier + "</span></td>" +
         "<td>" + pipelineCell + "</td>" +
         "<td>" + modelCell + "</td>" +
-        "<td><span class='status-pill " + a.status + "'><span class='dot'></span>" + a.status + "</span></td>" +
+        "<td>" + statusCell(a) + "</td>" +
         "<td>" + a.approval + "</td>" +
         "<td class='mono'>" + a.reviewed + "</td>" +
         "</tr>";
