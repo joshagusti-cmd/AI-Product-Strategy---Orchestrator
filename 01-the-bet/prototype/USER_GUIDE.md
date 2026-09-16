@@ -33,6 +33,10 @@ Controls you can't use for your role are disabled in the UI, and the same restri
 
 **Vendor portability, in the top bar itself.** The Anthropic/OpenAI/Google chips next to the logo on every page aren't decoration — they reflect this signed-in workspace's own real Provider Keys status. Anthropic is always lit (Aiven's own key, no setup); OpenAI/Google light up the moment this workspace connects its own key above, and dim again if it's removed. Hover a chip for the real reason behind its state. It's the same not-locked-to-one-vendor story the pitch makes (`02-the-moat/kill-switch.md`), made visible in the product itself rather than left to a slide.
 
+**Jumping straight to what a reference is about.** Several pages mention an agent or an approval by name in passing — Approval Queue's "Raised by," Shadow AI's "Owner," Model Spend's "By agent," Audit Trail's actor and action columns, Workflow History's "held for a second release approval" note, Agent Registry's "Review" status. Wherever that reference resolves to a real, still-existing row, it's a real link, not just text — click it and you land on the Agent Registry or Approval Queue, scrolled to and highlighting whatever it's about (one exact row for a reference to a single agent or approval; every still-pending request for an agent-wide reference like a Status pill) with a one-time highlight pulse so you're not hunting for it in a long table. A reference that no longer resolves to anything (an agent since removed, an approval from a reset demo) stays plain text rather than pointing at a dead link.
+
+**On a phone screen.** The subnav at the top of every desktop-console page scrolls horizontally once it's wider than your screen, with a fade at whichever edge has more tabs off-screen, and it automatically scrolls the current page's tab into view on load — you're never dropped on a tab that's scrolled out of sight. The Approval Queue also has a dedicated mobile companion view built for a phone from the ground up (see **On your phone**, below) rather than relying on the subnav's own scroll behavior alone.
+
 ---
 
 ## Command Center (`index.html`)
@@ -58,6 +62,8 @@ What happens next is real: six independent Claude API calls run in sequence — 
 
 **Saved templates.** Running the same kind of analysis on a schedule ("do this every month")? Set up the objective, scope, and routing the way you want, type a name in the **Save as template** box, and click save. A saved template shows up in the **Load a saved template** dropdown — picking one instantly fills in the objective, department/source chips, auto-route toggle, and every per-agent model assignment exactly as you saved them, ready to click Orchestrate. Delete a template from the same dropdown once you no longer need it. Templates are shared across your whole workspace, not just your own login.
 
+**Agent network.** The hub-and-spoke diagram below the objective form is a real, live view of the six-agent pipeline, not decoration — each agent sits on its own ring position with its own endpoint dot (spaced to stay readable and to leave visible room for a future agent, should the pipeline ever grow past six). Click an agent's chip to see its role and reassign its model right there; the same real governance re-evaluation fires as reassigning it from the Agent Registry.
+
 ---
 
 ## Agent Registry (`agents.html`)
@@ -67,6 +73,8 @@ The full roster of agents the orchestrator governs — across every department, 
 **Claude Sonnet 5** and **Claude Opus 4.8** are always real per-call routing targets. **GPT-4o** and **Gemini 1.5 Pro** are real too, for a workspace that's connected its own OpenAI/Google key (see **Provider Keys**, below) — otherwise, or for Claude Haiku 4.5 via manual selection, assigning it doesn't error, the run silently falls back to that agent's Claude default and tells you so in a toast. Either way it means the registry's stated model and the real model running it have drifted apart. The **Shadow AI Audit** (below) is built to catch exactly that — and, once a provider's connected, it stops treating that provider's requests as drift, since they're genuinely real now.
 
 **Filtering.** Filter by tier, or by department — the department chips are built from whatever's actually in your workspace's registry, not a fixed list. Click the **Departments covered** KPI tile to jump straight to the department filter.
+
+**A "Review" status links to the reason it's waiting.** When an agent's Status column shows **Review**, that's clickable exactly when there's a real pending approval raised by that agent — click it and you land on the Approval Queue, scrolled to and highlighting that exact request. A "Review" status with nothing actually pending (mid-pipeline, not blocked on a decision) stays a plain, unlinked pill rather than pointing at nothing.
 
 **The Pipeline column is real control, not just a label.** For the agents that make up the Command Center's real pipeline, this column shows their real step number and, where it applies, a **Writer** or **Risk gate** tag. The **Enabled** checkbox next to it (Admin-only) genuinely removes that agent from the very next real Orchestrate run — it stays in the registry, it just doesn't run until you turn it back on. The Writer and Risk-gate roles can't be disabled here, since the pipeline needs exactly one of each to run at all.
 
@@ -92,7 +100,7 @@ Only Admins and Compliance Owners can edit policies; every save is logged to the
 
 ## Approval Queue (`approvals.html`)
 
-The org-wide backlog of everything waiting on a human — filterable by risk and by department. Anyone in the workspace can approve or reject. Deciding an approval that came from a paused Orchestrate run has a real, further effect: **Approve** actually resumes that run's remaining Claude calls and produces the deliverable; **Reject** genuinely ends it. This is the same real effect as deciding it from the Command Center's own panel — just from wherever you happen to be reviewing.
+The org-wide backlog of everything waiting on a human — filterable by risk and by department. Anyone in the workspace can approve or reject. **Raised by** links back to that agent's real Agent Registry row whenever the name resolves to one. Deciding an approval that came from a paused Orchestrate run has a real, further effect: **Approve** actually resumes that run's remaining Claude calls and produces the deliverable; **Reject** genuinely ends it. This is the same real effect as deciding it from the Command Center's own panel — just from wherever you happen to be reviewing.
 
 **Release approvals** ("Release: <objective>," titled from the Executive Writer Agent) are a distinct real approval type under a **Two-gate** policy — the run already fully generated its deliverable, so there's nothing left to resume. **Approve** releases it into Workflow History for the whole workspace to see; **Reject** keeps it generated but permanently held back from that shared archive.
 
@@ -106,6 +114,8 @@ A real-time, searchable log of every agent and human action — approving someth
 
 **Filter by department.** The department chips above the log are built from your workspace's own real agent roster, same as Agent Registry, Approval Queue, and Workflow History. An entry is attributed to a department by matching its real actor text against a real agent's name — an entry from "Human reviewer," "Orchestrator Core," or a kill-switch drill isn't a registered agent at all, so it stays real but only shows up under "All," never guessed into a department it wasn't actually part of.
 
+**Actor and action link back to what they're about.** An actor that's a real, still-registered agent name links to its Agent Registry row (this also lights up older entries logged before this shipped, matched by exact name); an action naming a specific approval decision links to that exact row in the Approval Queue. Most entries — "Orchestrator Core," "Human reviewer," a workspace-level redaction or retention event — aren't about one specific agent or approval and stay plain text, which is expected, not a bug.
+
 **Ask the audit trail.** Type a question in plain language — "why did the Risk & Compliance Agent flag something last week?" — and a real Claude call answers it, grounded strictly in your workspace's own real log entries (the 300 most recent). If the log doesn't actually support an answer, it says so plainly rather than making one up. Every question and answer is saved, so your history is still there next time you visit. This is rate-limited separately from Orchestrate — 40 questions per rolling 24 hours per workspace.
 
 ---
@@ -116,7 +126,7 @@ A real, searchable archive of every completed Orchestrate run's full deliverable
 
 **Full prompt visibility.** Each agent step now has a **View prompt** toggle showing the exact system and user prompt that agent's real Claude call actually received — the real inputs behind its response, not just the response itself. Runs archived before this shipped simply have no toggle (an honest gap, not a backfilled guess).
 
-**Pending release.** A run generated under a **Two-gate** policy (Policies above) shows a **Pending release** badge and its deliverable stays hidden here — a real "Generated, but held for a second release approval" placeholder — until someone decides its release approval in the Approval Queue. The **Pending release** KPI tile counts how many are waiting on you right now.
+**Pending release.** A run generated under a **Two-gate** policy (Policies above) shows a **Pending release** badge and its deliverable stays hidden here — a real "Generated, but held for a second release approval" placeholder — until someone decides its release approval in the Approval Queue. The **Pending release** KPI tile counts how many are waiting on you right now. The placeholder's **Approval Queue** link goes straight to that run's own release approval, not just the queue's front page — you land already scrolled to and highlighting the exact request this run is waiting on.
 
 **Comparing two runs.** Check the box on any two rows (checking a third does nothing until you uncheck one) and click **Compare selected** to see both full deliverables side by side — objective, scope, model, executive summary, findings, recommendations, risk flags, every agent step. It's a real juxtaposition of two real archived runs, not a computed diff — nothing is highlighted as "changed," you're just looking at both in full at once. Click **← Back to archive** to return to the list.
 
@@ -127,7 +137,7 @@ A real, searchable archive of every completed Orchestrate run's full deliverable
 Two things live here, deliberately kept separate:
 
 - **Cost by tier / by model provider** — a modeled projection tied to the cascading Leader/Filler/Killer pricing strategy from the business case. Illustrative, not billed.
-- **Real Orchestrate spend** — every real Claude call your workspace has actually made, priced at real, current Anthropic per-model rates, broken down by model and by agent. This is measured, not modeled — it comes straight from what actually ran. A **"Today's spend / real cap"** tile shows the same rolling-24h figure the Edge Function actually enforces against your plan's real dollar cap — not a separate estimate.
+- **Real Orchestrate spend** — every real Claude call your workspace has actually made, priced at real, current Anthropic per-model rates, broken down by model and by agent. This is measured, not modeled — it comes straight from what actually ran. A **"Today's spend / real cap"** tile shows the same rolling-24h figure the Edge Function actually enforces against your plan's real dollar cap — not a separate estimate. Each row in the **by agent** breakdown links straight to that agent's Agent Registry row.
 
 ---
 
@@ -140,7 +150,7 @@ A list of historical illustrative findings sits here as backdrop (a legacy scori
 2. Has a real Orchestrate run actually requested an ungoverned model (like "GPT-4o") and gotten silently substituted? That's a real, repeated request for something not really governed.
 3. Has a single real call's token usage spiked sharply above that same agent's own rolling average in your workspace? A real, deterministic statistical check (a 3-sigma outlier against that agent's own call history) — not trained anomaly-detection ML, and it needs at least 5 prior calls for that agent before it trusts a baseline at all, so a brand-new workspace correctly shows nothing here yet.
 
-Every new finding lands in the same queue as the historical ones, waiting on an Admin or Compliance Owner to **Govern** (log it, accept as known) or **Kill** (act on it — fix the registry, or dig into what an anomalous run actually asked for). This can't detect outside tool use — a personal ChatGPT account, an unsanctioned browser extension — since nothing about those ever touches this app; that needs real endpoint/CASB integration and a real audit at a real customer.
+Every new finding lands in the same queue as the historical ones, waiting on an Admin or Compliance Owner to **Govern** (log it, accept as known) or **Kill** (act on it — fix the registry, or dig into what an anomalous run actually asked for). **Owner** links to that agent's Agent Registry row, whether it's written as a bare agent name or a "Department — Agent name" pair. This can't detect outside tool use — a personal ChatGPT account, an unsanctioned browser extension — since nothing about those ever touches this app; that needs real endpoint/CASB integration and a real audit at a real customer.
 
 ---
 
