@@ -70,7 +70,7 @@
   <div class="policy-grid" id="policy-grid"></div>
 
   <footer class="foot">
-    <span>Aiven Consulting Group — prototype build, simulated data · <button class="reset-link" id="reset-demo" type="button">Reset demo data</button></span>
+    <span>Aiven Consulting Group — prototype build, simulated data · <button class="reset-link" id="reset-demo" type="button">Reset demo data</button> · <a class="ref-link" href="user-training.html">User Training</a></span>
     <span id="clock" class="tabular"></span>
   </footer>
 </div>
@@ -108,10 +108,10 @@
         "<select class='control autonomy-select'" + dis + ">" +
         AUTONOMY.map(function (a) { return "<option" + (a === p.autonomy ? " selected" : "") + ">" + a + "</option>"; }).join("") +
         "</select>" +
-        "<div class='field-hint'><strong>Autonomous</strong>/<strong>Advisory</strong> — flags are shown but never pause a run. " +
-        "<strong>Approval-required</strong> — a flag at or above the threshold below pauses the run for a human decision (gate 1). " +
-        "<strong>Two-gate</strong> — gate 1 works the same, plus every run this policy produces is held out of Workflow History until a second, separate release approval clears it (gate 2), whether or not gate 1 ever fired." +
-        (isEnforced ? "" : " Only the Core-tier policy is actually checked by a real Orchestrate run today — this one is shown for reference.") +
+        "<div class='field-hint'><strong>Autonomous</strong>/<strong>Advisory</strong>: flags are shown but never pause a run. " +
+        "<strong>Approval-required</strong>: a flag at or above the threshold below pauses the run for a human decision (gate 1). " +
+        "<strong>Two-gate</strong>: gate 1 works the same, plus every run this policy produces is held out of Workflow History until a second, separate release approval clears it (gate 2), whether or not gate 1 ever fired." +
+        (isEnforced ? "" : " Only the Core-tier policy is actually checked by a real Orchestrate run today; this one is shown for reference.") +
         "</div></div>" +
         "<div class='field'><span class='field-label'>Escalation risk threshold</span>" +
         "<div class='threshold-row'><input type='range' class='control threshold-range' min='0' max='100' value='" + p.riskThreshold + "'" + dis + ">" +

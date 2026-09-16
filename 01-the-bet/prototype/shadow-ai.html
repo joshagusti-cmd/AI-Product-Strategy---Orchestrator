@@ -80,7 +80,7 @@
   </div>
 
   <footer class="foot">
-    <span>Aiven Consulting Group — prototype build, simulated data · <button class="reset-link" id="reset-demo" type="button">Reset demo data</button></span>
+    <span>Aiven Consulting Group — prototype build, simulated data · <button class="reset-link" id="reset-demo" type="button">Reset demo data</button> · <a class="ref-link" href="user-training.html">User Training</a></span>
     <span id="clock" class="tabular"></span>
   </footer>
 </div>
@@ -240,8 +240,8 @@
       var canDecide = Aiven.auth.isComplianceOwner();
       var decisionCell = t.decision === "undecided"
         ? (canDecide
-          ? "<div class='row-actions'><button class='btn ghost approve small' data-id='" + t.id + "' data-decision='govern' title='Log this finding as known and accepted — records the decision, doesn't change the agent, model, or anything else.'>Govern</button>" +
-            "<button class='btn ghost reject small' data-id='" + t.id + "' data-decision='kill' title='Flag this finding as needing real action — fix the drift on the Agent Registry or dig into the anomalous run yourself; Kill records the decision but doesn't automatically change anything.'>Kill</button></div>"
+          ? "<div class='row-actions'><button class='btn ghost approve small' data-id='" + t.id + "' data-decision='govern' title='Logs this finding as known and accepted. Does not change the agent, model, or anything else.'>Govern</button>" +
+            "<button class='btn ghost reject small' data-id='" + t.id + "' data-decision='kill' title='Flags this finding as needing real action: fix the drift on the Agent Registry, or dig into the anomalous run yourself. Kill records the decision but does not automatically change anything.'>Kill</button></div>"
           : "<span class='muted' style='font-size:11px;' title='Only admins and compliance owners can decide'>Awaiting compliance owner</span>")
         // A real, recorded decision — stamped, not just colored. .stamp-in
         // plays the stamp-hitting-paper animation once, only right after

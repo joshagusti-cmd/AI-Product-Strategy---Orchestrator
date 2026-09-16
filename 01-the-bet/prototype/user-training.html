@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>User Training: Aiven Orchestrator</title>
+<meta name="description" content="Step-by-step training for the Aiven Orchestrator console, from setup to reporting.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/shared.css">
+<style>
+  .guide-shell { max-width: 1360px; margin: 0 auto; padding: 0 28px 80px; display: grid; grid-template-columns: 240px 1fr; gap: 32px; align-items: start; }
+  .guide-toc { position: sticky; top: 84px; padding: 16px 0; }
+  .guide-toc .eyebrow { margin-bottom: 10px; display: block; }
+  .guide-toc ol { list-style: none; margin: 0; padding: 0; counter-reset: toc; }
+  .guide-toc li { counter-increment: toc; margin-bottom: 2px; }
+  .guide-toc a {
+    display: block; padding: 6px 10px; font-size: 12px; color: var(--text-dim); text-decoration: none;
+    border-left: 2px solid transparent; line-height: 1.4;
+  }
+  .guide-toc a::before { content: counter(toc) ". "; font-family: var(--mono); color: var(--text-mute); }
+  .guide-toc a:hover { color: var(--text); border-left-color: var(--border); }
+  .guide-toc a.active { color: var(--accent); border-left-color: var(--accent); }
+  .guide-main { min-width: 0; }
+  .guide-main > section { margin-bottom: 22px; scroll-margin-top: 84px; }
+  .guide-main .panel-body { display: flex; flex-direction: column; gap: 12px; }
+  .guide-main p, .guide-main li { font-size: 13.5px; line-height: 1.65; color: var(--text-dim); max-width: 76ch; }
+  .guide-main strong { color: var(--text); font-weight: 600; }
+  .guide-main code { font-family: var(--mono); font-size: 12px; background: var(--surface-sunken); border: 1px solid var(--border-soft); padding: 1px 5px; color: var(--text); }
+  .guide-main ul, .guide-main ol.steps { margin: 0; padding-left: 20px; }
+  .guide-main ol.steps { padding-left: 22px; }
+  .guide-main ol.steps li { margin-bottom: 6px; }
+  .guide-main a.ref-link { text-decoration: underline; text-decoration-color: var(--accent-dim); }
+  .role-table th, .role-table td { vertical-align: top; }
+  .admin-badge {
+    font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--accent); border: 1px solid var(--accent-dim); padding: 2px 7px; display: inline-block; margin-left: 8px;
+  }
+  .guide-lead { font-size: 13.5px; color: var(--text-mute); max-width: 76ch; line-height: 1.6; }
+  .guide-lead a { color: var(--accent); text-decoration: underline; }
+  .guide-foot-links { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+  .guide-foot-links a { color: var(--accent); text-decoration: underline; font-size: 12.5px; }
+  @media (max-width: 980px) {
+    .guide-shell { grid-template-columns: 1fr; padding: 0 18px 60px; }
+    .guide-toc { position: static; padding: 0 0 8px; border-bottom: 1px solid var(--border-soft); margin-bottom: 8px; }
+    .guide-toc ol { display: flex; flex-wrap: wrap; gap: 4px; }
+    .guide-toc a { border-left: none; border-bottom: 2px solid transparent; padding: 5px 8px; }
+    .guide-toc a.active { border-left: none; border-bottom-color: var(--accent); }
+  }
+</style>
+</head>
+<body data-page="training">
+<script>document.documentElement.setAttribute("data-theme", "dark");</script>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="index.html">
+      <div class="brand-mark"></div>
+      <div class="brand-text"><span class="name">AIVEN ORCHESTRATOR</span><span class="sub">Agent governance console</span></div>
+    </a>
+    <div class="model-rail" id="model-rail">
+      <div class="status-live"><span class="dot"></span>LIVE</div>
+      <div class="auth-widget" id="auth-widget"></div>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle color theme">MODE</button>
+    </div>
+  </div>
+</div>
+
+<div class="guide-shell">
+  <nav class="guide-toc" aria-label="Training sections">
+    <span class="eyebrow">On this page</span>
+    <ol id="toc-list">
+      <li><a href="#before-you-start">Before you start</a></li>
+      <li><a href="#signing-in">Signing in and your role</a></li>
+      <li><a href="#admin-setup">Setting up your workspace</a></li>
+      <li><a href="#first-run">Your first Orchestrate run</a></li>
+      <li><a href="#gates">Policies and gates</a></li>
+      <li><a href="#approval-queue">Managing approvals</a></li>
+      <li><a href="#agent-registry">Managing agents</a></li>
+      <li><a href="#audit-trail">Auditing every action</a></li>
+      <li><a href="#reporting">Reporting</a></li>
+      <li><a href="#shadow-ai">Governing AI use</a></li>
+      <li><a href="#reset">Resetting demo data</a></li>
+      <li><a href="#next">Where to go next</a></li>
+    </ol>
+  </nav>
+
+  <main class="guide-main">
+    <div class="page-head" style="margin-top:28px;">
+      <h1>&gt; User Training</h1>
+      <p>Setup to reporting, in the order you would actually use it. For what an exact field does, see <a class="ref-link" href="USER_GUIDE.md">the page-by-page User Guide</a>, which this page links to instead of repeating.</p>
+    </div>
+    <p class="guide-lead">Everything below is real and live: real Supabase Postgres, real authentication, real Claude API calls, real policy enforcement. It is not a mockup, except where a section says otherwise. Video walkthroughs are planned for later; this page is the written and clickable version.</p>
+
+    <section id="before-you-start">
+      <div class="panel">
+        <div class="panel-head"><div><h2>0. Before you start</h2><div class="hint">Two workspaces exist wherever you open the app.</div></div></div>
+        <div class="panel-body">
+          <p><strong>The public demo.</strong> What you see before signing in. Shared and read only. You can click through every page, but nothing that changes data will work: no running Orchestrate, no saving a policy, no deciding an approval.</p>
+          <p><strong>Your own workspace.</strong> Created automatically the first time you sign in, private to you and anyone you invite into it. Everything else on this page describes your own workspace.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="signing-in">
+      <div class="panel">
+        <div class="panel-head"><div><h2>1. Signing in and finding your role</h2><div class="hint">Magic link, no password, auto-created on first sign-in.</div></div></div>
+        <div class="panel-body">
+          <ol class="steps">
+            <li>Click the auth widget in the top bar of any page and enter your email.</li>
+            <li>You will get a magic link. There is no password. Click it and you are in.</li>
+            <li>The first time you sign in, a private workspace is created for you automatically, pre-loaded with a starting set of agents and policies.</li>
+          </ol>
+          <table class="data role-table">
+            <thead><tr><th>Role</th><th>What you can do</th></tr></thead>
+            <tbody>
+              <tr><td class="name">Admin</td><td>Everything Analyst and Compliance Owner can do, plus reassign agent models, manage the team, change the plan, and everything in <a class="ref-link" href="#admin-setup">Setting up your workspace</a> below.</td></tr>
+              <tr><td class="name">Compliance Owner</td><td>Edit policies, decide Shadow AI findings (govern or kill). Admins can do this too.</td></tr>
+              <tr><td class="name">Analyst</td><td>Run Orchestrate, approve or reject requests, run a Shadow AI scan, ask the audit trail a question.</td></tr>
+            </tbody>
+          </table>
+          <p>Any control you cannot use for your role is disabled in the interface, and rejected on the server too, so this is not just cosmetic. If you belong to more than one workspace, a switcher appears near the auth widget.</p>
+          <p><strong>On a phone.</strong> The navigation bar scrolls horizontally and automatically scrolls to the current tab. The Approval Queue also has a dedicated <a class="ref-link" href="mobile-approvals.html">mobile companion view</a>.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="admin-setup">
+      <div class="panel">
+        <div class="panel-head"><div><h2>2. Setting up your workspace<span class="admin-badge">Admin only</span></h2><div class="hint">Everything here lives in the Workspace modal, opened from the auth widget. Skip to <a class="ref-link" href="#first-run">Section 3</a> if you are not an Admin.</div></div></div>
+        <div class="panel-body">
+          <p><strong>Invite your team.</strong> Workspace, then Team: enter a teammate's email, pick their role, and send it. They join automatically the next time they sign in with that email, with no accept step needed. Not yet available: a member leaving on their own, or changing their own role.</p>
+          <p><strong>Set the plan and usage caps.</strong> Free, Pro, or Enterprise sets two real, enforced limits at once: Orchestrate runs per rolling 24 hours (20, 100, or 500) and real dollars spent per rolling 24 hours ($5, $25, or $150, at real Anthropic rates). Either limit alone can stop a new run. There is no real billing behind this yet; changing the plan only changes the enforced numbers.</p>
+          <p><strong>Turn on Emergency Stop if needed.</strong> One real switch that freezes every new Orchestrate run, every paused run resume, and every external agent's approval check, for the whole workspace, until an Admin lifts it. Real for everything Aiven itself runs; it cannot reach into an external agent's own code if that code never checks in first.</p>
+          <p><strong>Connect your own OpenAI or Google key.</strong> By default, "GPT-4o" and "Gemini 1.5 Pro" fall back to Claude without asking. Paste your own key into Workspace, then Provider Keys, and that provider becomes real: encrypted at rest, never shown again after saving. The Anthropic, OpenAI, and Google indicators in the top bar reflect this live; hover over one to see why.</p>
+          <p><strong>Set up webhook notifications.</strong> Workspace, then Webhook Notifications, takes a plain POST URL (a Slack or Teams incoming webhook, or any generic endpoint). The moment a run pauses for approval, Aiven sends a real JSON message to it. Every attempt is logged and shown as "last delivery: succeeded or failed, and how long ago."</p>
+          <p><strong>Set a data retention window.</strong> Workspace, then Data Retention, sets an automatic deletion window (30, 90, 180, or 365 days, or none, which is the default) for Audit Trail and Workflow History rows. Enforced daily, plus a "Run retention now" button for immediate, verified proof. This cannot be undone.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="first-run">
+      <div class="panel">
+        <div class="panel-head"><div><h2>3. Running your first Orchestrate</h2><div class="hint">The Command Center (index.html): the page you will use most.</div></div></div>
+        <div class="panel-body">
+          <ol class="steps">
+            <li>Enter a business objective, for example: "Assess our Q3 vendor risk exposure and recommend next steps."</li>
+            <li>Pick departments and data sources in scope using the chips.</li>
+            <li>Choose routing: leave <strong>Auto-route models by risk and complexity</strong> on (the default), or turn it off to assign each agent's model yourself.</li>
+            <li>Click <strong>Orchestrate</strong>.</li>
+          </ol>
+          <p>Six independent, real Claude API calls run in sequence: Research, Finance, Operations, Risk and Compliance, Strategy, Executive Writer. Each one reads the prior agents' real output. Watch the timeline light up as each step completes.</p>
+          <p><strong>Two safeguards run automatically before your objective is sent anywhere.</strong> Redaction masks Social Security numbers, emails, phone numbers, credit card numbers, and API-key-shaped strings. Prompt injection screening neutralizes attempts to override or extract instructions, marked as <code>[FLAGGED:PROMPT_INJECTION]</code>. Both are logged to the Audit Trail and shown in an on-screen message.</p>
+          <p>If the run pauses, see <a class="ref-link" href="#gates">Section 4</a>. That is expected, not an error. When it finishes, you get an executive summary, findings, recommendations, and risk flags. Copy it as Markdown, print it, or find it later in Workflow History.</p>
+          <p><strong>Running the same analysis often?</strong> Save the objective, scope, and routing as a named template and reload it later. Templates are shared across your whole workspace.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="gates">
+      <div class="panel">
+        <div class="panel-head"><div><h2>4. Policies and gates</h2><div class="hint">policies.html: the Core tier is the one policy a real run actually checks.</div></div></div>
+        <div class="panel-body">
+          <p>A run only pauses because of the <strong>Core tier</strong> policy: an autonomy level, a risk threshold from 0 to 100, and a plain-language escalation rule.</p>
+          <ul>
+            <li><strong>Autonomous or Advisory.</strong> The flag is shown, but the run always continues. Nothing pauses.</li>
+            <li><strong>Approval required.</strong> A flag at or above the threshold pauses the run before Strategy and Writer run (this is gate 1). A human has to decide.</li>
+            <li><strong>Two-gate.</strong> Gate 1 works the same way, plus a real gate 2: every run this policy produces is held out of Workflow History until a second, separate approval releases it, whether or not gate 1 ever fired.</li>
+          </ul>
+          <p>Only Admins and Compliance Owners can edit a policy, and every save is logged. When gate 1 pauses a run, decide it from the Command Center's own panel or from the org-wide Approval Queue (<a class="ref-link" href="#approval-queue">Section 5</a>). Both have the same real effect.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="approval-queue">
+      <div class="panel">
+        <div class="panel-head"><div><h2>5. Managing approvals</h2><div class="hint">approvals.html: the org-wide backlog of everything waiting on a human.</div></div></div>
+        <div class="panel-body">
+          <p>Filterable by risk and department. Anyone in the workspace can approve or reject. Two kinds of rows behave differently:</p>
+          <ul>
+            <li>A <strong>regular approval</strong> (a paused Orchestrate run, or an external agent): <strong>Approve</strong> resumes the run's remaining Claude calls, <strong>Reject</strong> ends it for good.</li>
+            <li>A <strong>release approval</strong>, titled <code>Release: [objective]</code>: this is gate 2 under Two-gate. The run already finished, so <strong>Approve</strong> releases it into Workflow History and <strong>Reject</strong> keeps it held back.</li>
+          </ul>
+          <p><strong>Raised by</strong> links straight back to the agent's Agent Registry row. On your phone, use the <a class="ref-link" href="mobile-approvals.html">mobile companion view</a> for the same live queue and the same real decisions, with large Approve and Reject cards.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="agent-registry">
+      <div class="panel">
+        <div class="panel-head"><div><h2>6. Managing agents</h2><div class="hint">agents.html: every agent the orchestrator governs.</div></div></div>
+        <div class="panel-body">
+          <p><strong>Claude Sonnet 5</strong> and <strong>Claude Opus 4.8</strong> are always real routing targets. <strong>GPT-4o</strong> and <strong>Gemini 1.5 Pro</strong> become real once your workspace connects its own provider key. Otherwise they silently fall back to Claude and tell you so in a message. That mismatch is exactly what the Shadow AI Audit (<a class="ref-link" href="#shadow-ai">Section 9</a>) is built to catch.</p>
+          <p>Filter by tier or department. A <strong>Review</strong> status is clickable exactly when there is a real pending approval raised by that agent. The <strong>Pipeline</strong> column shows each Command Center agent's real step number, and an Admin-only <strong>Enabled</strong> checkbox genuinely removes an agent from the next real Orchestrate run.</p>
+          <p><strong>Add an external agent</strong> to connect anything your team already runs elsewhere. You get a real API key and endpoint, shown exactly once. The honest limit: Aiven never runs that agent itself, so a gate only works if that agent's own code checks in first and honors the answer.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="audit-trail">
+      <div class="panel">
+        <div class="panel-head"><div><h2>7. Auditing every action</h2><div class="hint">audit.html: a real-time, searchable log of every agent and human action.</div></div></div>
+        <div class="panel-body">
+          <p>Approvals, policy saves, orchestrate runs: everything lands here immediately. Export the current view as JSON or CSV. Filter by department; actor and action entries link back to the Agent Registry or Approval Queue row they are about, whenever that resolves to something real.</p>
+          <p><strong>Ask the audit trail.</strong> A plain-language question gets a real Claude answer, grounded strictly in your workspace's own most recent 300 log entries. If the log does not support an answer, it says so. This has its own separate limit from Orchestrate: 40 questions per rolling 24 hours.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="reporting">
+      <div class="panel">
+        <div class="panel-head"><div><h2>8. Reporting</h2><div class="hint">Three pages, three different jobs.</div></div></div>
+        <div class="panel-body">
+          <p><strong>Workflow History</strong> (workflow-history.html): a real, searchable archive of every completed run's full deliverable. Each step has a "View prompt" option showing the exact prompt that agent's call received. A Two-gate run shows a "Pending release" badge until its release approval clears. Check any two rows and click "Compare selected" for a real side-by-side view.</p>
+          <p><strong>Model Spend Dashboard</strong> (spend.html): two things kept separate. "Cost by tier and provider" is a modeled projection, illustrative, not billed. "Real Orchestrate spend" is every real Claude call your workspace has made, priced at real Anthropic rates, measured rather than modeled.</p>
+          <p><strong>Governance Snapshot</strong> (governance-snapshot.html): a single-document bundle of your real policies, approval record, and audit trail, formatted for an actual auditor or customer security review. "Print, or save as PDF" strips the console frame for a genuine document. "Copy as Markdown" copies the same content as plain text.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="shadow-ai">
+      <div class="panel">
+        <div class="panel-head"><div><h2>9. Governing AI use: Shadow AI Audit</h2><div class="hint">shadow-ai.html: three real checks against your own workspace's real data.</div></div></div>
+        <div class="panel-body">
+          <ol class="steps">
+            <li>Does an agent's assigned model fail to match a model this workspace can actually call? Real registry drift.</li>
+            <li>Has a real run requested an ungoverned model and been silently substituted? A real, repeated request for something not really governed.</li>
+            <li>Has a single call's token usage spiked sharply above that agent's own rolling average? A real, deterministic 3-sigma check, not trained machine learning, needing at least 5 prior calls before it trusts a baseline.</li>
+          </ol>
+          <p>Every finding waits on an Admin or Compliance Owner to <strong>Govern</strong> it (log it, accept as known, nothing else changes) or <strong>Kill</strong> it (flag it as needing real action, such as fixing the registry or digging into the anomalous run; Kill does not automatically fix anything by itself). This cannot detect outside tool use, such as a personal ChatGPT account or an unsanctioned browser extension, since nothing about those ever touches this app.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="reset">
+      <div class="panel">
+        <div class="panel-head"><div><h2>10. Resetting demo data</h2></div></div>
+        <div class="panel-body">
+          <p>Every page has a "Reset demo data" link in the footer. It only resets the shared public demo workspace. Your own signed-in workspace is never touched by it.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="next">
+      <div class="panel">
+        <div class="panel-head"><div><h2>Where to go next</h2></div></div>
+        <div class="panel-body guide-foot-links">
+          <a href="USER_GUIDE.md">Page-by-page reference, every field explained</a>
+          <a href="../prototype.md">What is real versus still modeled or simulated</a>
+          <a href="../../README.md">Product strategy and pitch</a>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<footer class="foot" style="max-width:1360px;margin:0 auto;padding:0 28px 40px;">
+  <span>Aiven Consulting Group, prototype build, simulated data. <button class="reset-link" id="reset-demo" type="button">Reset demo data</button> · <a class="ref-link" href="index.html">Back to Command Center</a></span>
+  <span id="clock" class="tabular"></span>
+</footer>
+
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="assets/data.js"></script>
+<script>
+(function () {
+  "use strict";
+  Aiven.initChrome();
+
+  // Highlights the current section in the table of contents as the
+  // reader scrolls. This page has no shared subnav, so this is the only
+  // "where am I" signal on a page this long.
+  var links = Array.prototype.slice.call(document.querySelectorAll("#toc-list a"));
+  var sections = links.map(function (a) { return document.getElementById(a.getAttribute("href").slice(1)); });
+  function setActive() {
+    var y = window.scrollY + 100;
+    var current = sections[0];
+    sections.forEach(function (s) { if (s && s.offsetTop <= y) current = s; });
+    links.forEach(function (a) {
+      a.classList.toggle("active", current && a.getAttribute("href") === "#" + current.id);
+    });
+  }
+  document.addEventListener("scroll", setActive, { passive: true });
+  setActive();
+})();
+</script>
+</body>
+</html>

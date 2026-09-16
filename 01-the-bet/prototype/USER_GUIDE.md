@@ -2,7 +2,7 @@
 
 This is a working guide to the Aiven Orchestrator console, kept up to date alongside the build — every feature below is real and live in the product today, not a mockup. If something here doesn't match what you see in the app, the app is right and this doc needs an update.
 
-For the product strategy, pitch, and "what's still simulated" caveats, see the root [`README.md`](../../README.md) and [`01-the-bet/prototype.md`](../prototype.md). This guide is purely "how do I use it" — page by page, every feature explained. New here? [`WALKTHROUGH.md`](WALKTHROUGH.md) walks the same ground in the order you'd actually use it, setup through reporting, and links back to this guide for detail.
+For the product strategy, pitch, and "what's still simulated" caveats, see the root [`README.md`](../../README.md) and [`01-the-bet/prototype.md`](../prototype.md). This guide is purely "how do I use it," page by page, every feature explained. New here? [`USER_TRAINING.md`](USER_TRAINING.md) (also available in the console itself at [`user-training.html`](user-training.html)) walks the same ground in the order you'd actually use it, setup through reporting, and links back to this guide for detail.
 
 ---
 
