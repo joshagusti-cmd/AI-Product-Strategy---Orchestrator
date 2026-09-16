@@ -229,8 +229,26 @@
     }
     body.innerHTML = rows.map(function (e) {
       var risk = e.risk && e.risk !== "—" ? "<span class='risk-pill " + e.risk + "'>" + e.risk + "</span>" : "<span class='muted'>—</span>";
+      // Actor -> Agent Registry: a direct agentId (set at write time,
+      // going forward) is preferred, but an older row written before
+      // this shipped still lights up if its actor happens to be an
+      // exact, still-registered agent name — same best-effort match
+      // approvals.html/shadow-ai.html already use. Either way, falls
+      // back to plain text when the agent is gone or never existed.
+      var agentId = e.agentId || Aiven.findAgentIdByName(state.agents, e.actor);
+      var agentStillRegistered = agentId && state.agents.some(function (a) { return a.id === agentId; });
+      var actorCell = agentStillRegistered
+        ? "<a class='ref-link' href='agents.html?agent=" + encodeURIComponent(agentId) + "'>" + e.actor + "</a>"
+        : e.actor;
+      // Action -> Approval Queue: only a direct approvalId counts here —
+      // the action text is a free-written sentence, not a name, so
+      // there's no honest fallback match to attempt.
+      var approvalStillExists = e.approvalId && state.approvals.some(function (a) { return a.id === e.approvalId; });
+      var actionCell = approvalStillExists
+        ? "<a class='ref-link' href='approvals.html?approval=" + encodeURIComponent(e.approvalId) + "'>" + e.action + "</a>"
+        : e.action;
       return "<tr><td class='mono' title='" + new Date(e.ts).toLocaleString() + "'>" + Aiven.timeAgo(e.ts) + "</td>" +
-        "<td class='name'>" + e.actor + "</td><td>" + e.action + "</td><td class='mono'>" + (e.model || "—") + "</td>" +
+        "<td class='name'>" + actorCell + "</td><td>" + actionCell + "</td><td class='mono'>" + (e.model || "—") + "</td>" +
         "<td>" + risk + "</td><td class='detail-cell'>" + (e.detail || "") + "</td></tr>";
     }).join("");
   }
