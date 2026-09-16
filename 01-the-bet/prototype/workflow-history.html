@@ -210,7 +210,7 @@
     // while calling the run "not released" would defeat the point of a
     // second gate on distribution.
     if (!isReleased(r)) {
-      return "<div class='held-back'>Generated, but held for a second release approval (Two-gate policy) — see the <a href='approvals.html'>Approval Queue</a>. The deliverable will appear here once released.</div>";
+      return "<div class='held-back'>Generated, but held for a second release approval (Two-gate policy) — see it in the <a href='approvals.html?approval=" + encodeURIComponent(r.release_approval_id) + "'>Approval Queue</a>. The deliverable will appear here once released.</div>";
     }
     var findings = (r.findings || []).map(function (f) { return "<li>" + f + "</li>"; }).join("") || "<li>No findings recorded.</li>";
     var risks = (r.risk_flags || []).map(function (f) { return "<li>" + f + "</li>"; }).join("") || "<li>No risk flags recorded.</li>";

@@ -260,15 +260,7 @@
     });
   }
 
-  // Deep link from the Agent Registry — approvals.html?agent=<id>, from
-  // a Status pill that's linkable because this agent has a pending
-  // approval. Filters default to "All"/"All" on a fresh load, so the
-  // matching row(s) are already in the table; this just finds them,
-  // scrolls to the first, and gives every match a highlight pulse.
-  function focusLinkedAgent() {
-    var id = new URLSearchParams(location.search).get("agent");
-    if (!id) return;
-    var rows = document.querySelectorAll("#approval-rows tr[data-agent-id='" + CSS.escape(id) + "']");
+  function focusRows(rows) {
     if (!rows.length) return;
     rows[0].scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "center" });
     Array.prototype.forEach.call(rows, function (row) {
@@ -278,12 +270,33 @@
     });
   }
 
+  // Two deep-link conventions land here, both read from the query string
+  // on a fresh load (filters default to "All"/"All", so either target is
+  // guaranteed to already be in the rendered table):
+  //  - approvals.html?agent=<id> — from the Agent Registry's Status pill,
+  //    matches every still-pending row raised by that agent.
+  //  - approvals.html?approval=<id> — from Workflow History's "held for a
+  //    second release approval" note, matches that exact gate-2 approval
+  //    by its own id (release_approval_id), however many other rows exist.
+  function focusDeepLink() {
+    var params = new URLSearchParams(location.search);
+    var approvalId = params.get("approval");
+    if (approvalId) {
+      focusRows(document.querySelectorAll("#approval-rows tr[data-id='" + CSS.escape(approvalId) + "']"));
+      return;
+    }
+    var agentId = params.get("agent");
+    if (agentId) {
+      focusRows(document.querySelectorAll("#approval-rows tr[data-agent-id='" + CSS.escape(agentId) + "']"));
+    }
+  }
+
   Aiven.loadState().then(function (s) {
     state = s;
     renderFilters();
     renderKpis();
     renderTable();
-    focusLinkedAgent();
+    focusDeepLink();
   }).catch(function (e) {
     Aiven.toast("Couldn't load the Approval Queue: " + e.message);
   });
