@@ -205,9 +205,10 @@ select.team-role-select {
   letter-spacing: 0.04em; color: var(--text-mute); margin-top: 2px; width: auto;
 }
 
-.subnav { border-bottom: 1px solid var(--border-soft); background: var(--bg-grid); }
+.subnav { border-bottom: 1px solid var(--border-soft); background: var(--bg-grid); position: relative; }
 .subnav-inner {
   max-width: 1360px; margin: 0 auto; padding: 0 28px; display: flex; gap: 2px; overflow-x: auto;
+  scroll-behavior: smooth;
 }
 .subnav a {
   display: block; white-space: nowrap; text-decoration: none;
@@ -216,6 +217,23 @@ select.team-role-select {
 }
 .subnav a:hover { color: var(--text-dim); }
 .subnav a.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* Real fade cue when the tab strip actually overflows (phone widths —
+   there's no room for all 9 destinations at once): a visible edge tells
+   the user there's more to scroll to, instead of the strip just looking
+   like a short, complete list that happens to cut off mid-word. Toggled
+   by JS (Aiven.initChrome, assets/data.js) based on real scroll
+   position, not just width, so it's gone entirely on desktop where
+   everything already fits. */
+.subnav::before, .subnav::after {
+  content: ""; position: absolute; top: 0; bottom: 0; width: 26px; pointer-events: none;
+  opacity: 0; transition: opacity .15s ease; z-index: 2;
+}
+.subnav::before { left: 0; background: linear-gradient(to left, transparent, var(--bg-grid)); }
+.subnav::after { right: 0; background: linear-gradient(to right, transparent, var(--bg-grid)); }
+.subnav.nav-overflow::after { opacity: 1; }
+.subnav.nav-overflow.nav-at-end::after { opacity: 0; }
+.subnav.nav-overflow.nav-scrolled::before { opacity: 1; }
 
 /* ---------- panel ---------- */
 .panel { border: 1px solid var(--border); background: var(--surface); }
@@ -295,6 +313,14 @@ table.data tr:last-child td { border-bottom: none; }
 table.data td.name { color: var(--text); font-weight: 600; }
 table.data tbody tr.flash { animation: flashIn .6s ease; }
 
+/* A real cross-link to another page rendered inside a table cell (e.g.
+   an approval's "Raised by", a Shadow AI finding's "Owner" — both link
+   back to the Agent Registry row when the name matches one exactly). `a`
+   resets to inherit color app-wide, so this is what actually makes it
+   read as a link rather than plain text with a pointer cursor. */
+.ref-link { color: var(--accent); text-decoration: none; }
+.ref-link:hover { text-decoration: underline; }
+
 /* ---------- forms ---------- */
 .field-label {
   display: block; font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em;
@@ -370,6 +396,17 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
   max-width: 320px;
 }
 @keyframes flashIn { from { transform: translateY(-4px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+/* Shared "you followed a link here" cue — a cross-link that lands on a
+   specific table row (e.g. agents.html?agent=risk) scrolls to it and
+   applies this once, so it's findable in a long table without a second
+   scan. A background pulse rather than a transform/opacity flash: the
+   row's own content shouldn't jump around, just glow briefly. */
+.deep-link-highlight { animation: deepLinkPulse 2.2s ease-out; }
+@keyframes deepLinkPulse {
+  0% { background: var(--accent-soft-2); }
+  100% { background: transparent; }
+}
 
 /* ---------- footer ---------- */
 footer.foot {

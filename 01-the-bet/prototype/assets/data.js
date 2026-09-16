@@ -171,6 +171,18 @@
     return { ts: row.ts, actor: row.actor, action: row.action, model: row.model, risk: row.risk, detail: row.detail };
   }
 
+  // Best-effort agent lookup by exact display name — lets a page cross-
+  // link a name-only reference (an approval's `agent` column, a Shadow
+  // AI finding's `owner`) back to that agent's real Agent Registry row,
+  // without every page re-implementing the same matching. Returns the
+  // real agent id, or null on no exact match — callers render plain
+  // text rather than a link when nothing matches, never a guess.
+  function findAgentIdByName(agents, name) {
+    if (!name) return null;
+    var match = (agents || []).find(function (a) { return a.name === name; });
+    return match ? match.id : null;
+  }
+
   function throwIfError(results) {
     for (var i = 0; i < results.length; i++) {
       if (results[i].error) throw results[i].error;
@@ -1397,6 +1409,32 @@
       });
     }
 
+    // Real fade-edge affordance for the tab strip (assets/shared.css
+    // .subnav::before/::after) — on a phone-width viewport only ~3 of the
+    // 9 destinations fit, and the strip scrolls horizontally but nothing
+    // about a plain overflow:auto div signals that. Toggled off real
+    // scroll position/width, not assumed from viewport size, so it's a
+    // no-op on desktop where the strip never actually overflows. Also
+    // scrolls the current page's own tab into view on load — landing on
+    // e.g. Governance Snapshot (the last tab) should show you which tab
+    // you're on, not just leave it off-screen to the right.
+    var subnav = document.querySelector(".subnav");
+    var subnavInner = document.querySelector(".subnav-inner");
+    if (subnav && subnavInner) {
+      var updateNavScrollState = function () {
+        var overflowing = subnavInner.scrollWidth > subnavInner.clientWidth + 1;
+        subnav.classList.toggle("nav-overflow", overflowing);
+        if (subnavInner.scrollLeft > 4) subnav.classList.add("nav-scrolled");
+        var atEnd = subnavInner.scrollLeft + subnavInner.clientWidth >= subnavInner.scrollWidth - 2;
+        subnav.classList.toggle("nav-at-end", atEnd);
+      };
+      subnavInner.addEventListener("scroll", updateNavScrollState, { passive: true });
+      global.addEventListener("resize", updateNavScrollState);
+      var activeTab = subnavInner.querySelector("a.active");
+      if (activeTab) activeTab.scrollIntoView({ block: "nearest", inline: "center" });
+      updateNavScrollState();
+    }
+
     var resetBtn = document.getElementById("reset-demo");
     if (resetBtn) {
       resetBtn.addEventListener("click", async function () {
@@ -1491,6 +1529,7 @@
     getWebhookConfig: getWebhookConfig,
     setWebhookConfig: setWebhookConfig,
     getWebhookDeliveries: getWebhookDeliveries,
+    findAgentIdByName: findAgentIdByName,
     timeAgo: timeAgo,
     timeClock: timeClock,
     toast: toast,

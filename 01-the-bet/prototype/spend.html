@@ -250,7 +250,11 @@
     document.getElementById("real-agent-rows").innerHTML = agentRows.length
       ? agentRows.map(function (a) {
           var r = byAgent[a];
-          return "<tr><td>" + (AGENT_NAMES[a] || a) + "</td><td class='tabular'>" + fmtInt(r.calls) + "</td><td class='tabular'>" + fmtInt(r.inTok) + "</td><td class='tabular'>" + fmtInt(r.outTok) + "</td><td class='tabular'>" + fmtUsd(r.cost) + "</td></tr>";
+          // orchestrate_call_log.agent_id is the real Agent Registry id
+          // directly — no name-matching needed, unlike approvals.html/
+          // shadow-ai.html which only ever had a display name to go on.
+          var label = "<a class='ref-link' href='agents.html?agent=" + encodeURIComponent(a) + "'>" + (AGENT_NAMES[a] || a) + "</a>";
+          return "<tr><td>" + label + "</td><td class='tabular'>" + fmtInt(r.calls) + "</td><td class='tabular'>" + fmtInt(r.inTok) + "</td><td class='tabular'>" + fmtInt(r.outTok) + "</td><td class='tabular'>" + fmtUsd(r.cost) + "</td></tr>";
         }).join("")
       : "<tr><td colspan='5'>No real Orchestrate calls logged yet for this workspace.</td></tr>";
   }

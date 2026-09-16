@@ -394,11 +394,29 @@
     document.getElementById("dept-filter").scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "center" });
   });
 
+  // Deep link from another page — agents.html?agent=<id> (Approval
+  // Queue's "Raised by", Shadow AI's "Owner", Model Spend's "By agent"
+  // all point here). Filters are always "All"/"All" on a fresh load, so
+  // the target row is guaranteed to be in the table already rendered
+  // above; this just finds it, scrolls it into view, and gives it one
+  // real highlight pulse so it's not just "somewhere in this table."
+  function focusLinkedAgent() {
+    var id = new URLSearchParams(location.search).get("agent");
+    if (!id) return;
+    var row = document.querySelector("#agent-rows tr[data-id='" + CSS.escape(id) + "']");
+    if (!row) return;
+    row.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "center" });
+    row.classList.remove("deep-link-highlight");
+    void row.offsetWidth; // restart the animation if this id was already highlighted once this load
+    row.classList.add("deep-link-highlight");
+  }
+
   Aiven.loadState().then(function (s) {
     state = s;
     renderFilters();
     renderKpis();
     renderTable();
+    focusLinkedAgent();
   }).catch(function (e) {
     Aiven.toast("Couldn't load the Agent Registry: " + e.message);
   });
