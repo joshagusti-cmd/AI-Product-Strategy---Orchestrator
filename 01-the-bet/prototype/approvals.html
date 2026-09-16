@@ -159,7 +159,17 @@
         // a._justDecided below) — not replayed on every later re-render.
         : "<span class='stamp " + a.status + (a._justDecided ? " stamp-in" : "") + "'>" + (a.status === "approved" ? "Approved" : "Rejected") + "</span>";
       a._justDecided = false; // consumed — later re-renders (e.g. a filter change) show the stamp static
-      return "<tr><td class='name'>" + a.title + "</td><td>" + a.agent + "</td><td>" + a.dept + "</td>" +
+      // Cross-link back to the real Agent Registry row that raised
+      // this, when the name matches one exactly (it always will for a
+      // real Orchestrate-raised approval — "Risk & Compliance Agent" or
+      // "Executive Writer Agent" — and usually will for the seeded demo
+      // rows too). Falls back to plain text rather than a guess when it
+      // doesn't, e.g. a name that no longer matches any current row.
+      var agentId = Aiven.findAgentIdByName(state.agents, a.agent);
+      var agentCell = agentId
+        ? "<a class='ref-link' href='agents.html?agent=" + encodeURIComponent(agentId) + "'>" + a.agent + "</a>"
+        : a.agent;
+      return "<tr><td class='name'>" + a.title + "</td><td>" + agentCell + "</td><td>" + a.dept + "</td>" +
         "<td><span class='risk-pill " + a.risk + "'>" + a.risk + "</span></td><td class='mono' title='" + new Date(a.requestedAt).toLocaleString() + "'>" + Aiven.timeAgo(a.requestedAt) + "</td>" +
         "<td>" + decision + "</td></tr>";
     }).join("");

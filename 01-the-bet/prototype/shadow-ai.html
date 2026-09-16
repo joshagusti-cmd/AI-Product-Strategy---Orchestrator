@@ -221,6 +221,19 @@
     document.getElementById("kpi-undecided").textContent = tools.filter(function (t) { return t.decision === "undecided"; }).length;
   }
 
+  // Owner is either a bare agent name ("Risk & Compliance Agent" — real
+  // substitution/anomaly findings, computeSubstitutionFindings/
+  // computeAnomalyFindings above) or "<dept> — <name>" (registry-drift
+  // findings, computeRegistryFindings above) — try the exact name
+  // first, then the part after " — ", so either shape links back to the
+  // real Agent Registry row when one actually matches.
+  function ownerAgentId(owner) {
+    var id = Aiven.findAgentIdByName(state.agents, owner);
+    if (id) return id;
+    var sep = owner.indexOf(" — ");
+    return sep === -1 ? null : Aiven.findAgentIdByName(state.agents, owner.slice(sep + 3));
+  }
+
   function renderTable() {
     var body = document.getElementById("shadow-rows");
     body.innerHTML = state.shadowTools.map(function (t) {
@@ -235,7 +248,11 @@
         // this specific decision (see t._justDecided below).
         : "<span class='stamp " + t.decision + (t._justDecided ? " stamp-in" : "") + "'>" + (t.decision === "govern" ? "Governed" : "Killed") + "</span>";
       t._justDecided = false; // consumed — later re-renders show the stamp static
-      return "<tr><td class='name name-cell'>" + t.name + "</td><td>" + t.owner + "</td>" +
+      var agentId = ownerAgentId(t.owner);
+      var ownerCell = agentId
+        ? "<a class='ref-link' href='agents.html?agent=" + encodeURIComponent(agentId) + "'>" + t.owner + "</a>"
+        : t.owner;
+      return "<tr><td class='name name-cell'>" + t.name + "</td><td>" + ownerCell + "</td>" +
         "<td><span class='risk-pill " + t.risk + "'>" + t.risk + "</span></td><td>" + decisionCell + "</td>" +
         "<td class='note-cell'>" + t.note + "</td></tr>";
     }).join("");
