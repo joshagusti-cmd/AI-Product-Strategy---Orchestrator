@@ -301,6 +301,10 @@ select.team-role-select {
 .status-pill.Paused, .status-pill.Killed { color: var(--critical); border-color: var(--critical); }
 .status-pill .dot { width: 5px; height: 5px; }
 
+.status-pill-link { display: inline-block; text-decoration: none; }
+.status-pill-link:hover .status-pill,
+.status-pill-link:focus-visible .status-pill { box-shadow: 0 0 0 1px currentColor inset; }
+
 /* ---------- tables ---------- */
 table.data { width: 100%; border-collapse: collapse; font-size: 12px; }
 table.data th {

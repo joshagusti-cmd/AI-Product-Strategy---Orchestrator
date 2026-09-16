@@ -169,7 +169,12 @@
       var agentCell = agentId
         ? "<a class='ref-link' href='agents.html?agent=" + encodeURIComponent(agentId) + "'>" + a.agent + "</a>"
         : a.agent;
-      return "<tr><td class='name'>" + a.title + "</td><td>" + agentCell + "</td><td>" + a.dept + "</td>" +
+      // data-agent-id is only set on a still-pending row — it's what the
+      // Agent Registry's Status-pill deep link targets, and landing on a
+      // long-since-decided item for the same agent would be confusing,
+      // not helpful.
+      var deepLinkAgentId = a.status === "pending" ? agentId : null;
+      return "<tr data-id='" + a.id + "' data-agent-id='" + (deepLinkAgentId || "") + "'><td class='name'>" + a.title + "</td><td>" + agentCell + "</td><td>" + a.dept + "</td>" +
         "<td><span class='risk-pill " + a.risk + "'>" + a.risk + "</span></td><td class='mono' title='" + new Date(a.requestedAt).toLocaleString() + "'>" + Aiven.timeAgo(a.requestedAt) + "</td>" +
         "<td>" + decision + "</td></tr>";
     }).join("");
@@ -255,11 +260,30 @@
     });
   }
 
+  // Deep link from the Agent Registry — approvals.html?agent=<id>, from
+  // a Status pill that's linkable because this agent has a pending
+  // approval. Filters default to "All"/"All" on a fresh load, so the
+  // matching row(s) are already in the table; this just finds them,
+  // scrolls to the first, and gives every match a highlight pulse.
+  function focusLinkedAgent() {
+    var id = new URLSearchParams(location.search).get("agent");
+    if (!id) return;
+    var rows = document.querySelectorAll("#approval-rows tr[data-agent-id='" + CSS.escape(id) + "']");
+    if (!rows.length) return;
+    rows[0].scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "center" });
+    Array.prototype.forEach.call(rows, function (row) {
+      row.classList.remove("deep-link-highlight");
+      void row.offsetWidth;
+      row.classList.add("deep-link-highlight");
+    });
+  }
+
   Aiven.loadState().then(function (s) {
     state = s;
     renderFilters();
     renderKpis();
     renderTable();
+    focusLinkedAgent();
   }).catch(function (e) {
     Aiven.toast("Couldn't load the Approval Queue: " + e.message);
   });
