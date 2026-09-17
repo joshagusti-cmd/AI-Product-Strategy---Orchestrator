@@ -1,0 +1,107 @@
+---
+description: Aiven Orchestrator project orientation — repo structure, stack, and working conventions
+alwaysApply: true
+---
+
+Orientation for working in this repo. This mirrors the root `CLAUDE.md` (written for Claude Code
+sessions) so an agent working from Cursor starts with the same context. If the two ever diverge,
+treat `CLAUDE.md` as canonical and update this file to match.
+
+## What this repo is
+
+`AI-Product-Strategy---Orchestrator` is a six-module product strategy exercise ("The Bet," "The
+Moat," "The Margin," "The Contract," "The Guardrails," "The Pitch" — `0X-the-*/` folders, see root
+`README.md` for the full narrative). The one module with real, running code is **The Bet**
+(`01-the-bet/`): a clickable governance-platform prototype called **Aiven Orchestrator**, at
+`01-the-bet/prototype/`.
+
+The prototype is not a mockup. It's a real Supabase-backed SaaS product: real Postgres, real
+multi-tenant auth (magic-link sign-in, auto-provisioned private workspaces, RBAC), real Claude API
+orchestration calls (Supabase Edge Functions), real policy gating, real spend tracking. Read
+`01-the-bet/prototype/USER_GUIDE.md` for what every page actually does today — it's a living doc,
+kept current feature-by-feature, and is more reliable than this file for product behavior.
+
+## Stack
+
+- **Frontend**: plain multi-page HTML/CSS/JS under `01-the-bet/prototype/*.html` — no build step,
+  no framework. `assets/data.js` is the single shared client module (`window.Aiven` namespace),
+  loaded via `<script>` tag on every page; it wraps all `supabase-js` calls (loaded from a CDN
+  `<script>` tag before it). `assets/shared.css` holds the shared design system. The Supabase
+  project URL and *publishable* key are hardcoded directly in `assets/data.js` (near the top) —
+  that's expected for a Supabase publishable key (RLS is the real security boundary), not a leaked
+  secret.
+- **Backend**: Supabase project `uqgdruekuwitjwyotdud` — Postgres (`supabase/migrations/`, 25+
+  files as of this writing), Edge Functions (`supabase/functions/`: `orchestrate`, `audit-qa`,
+  `agent-events`), RLS policies, `pg_cron` jobs (data retention), Supabase Vault (BYO provider
+  keys). If you have a Supabase MCP connection or the `supabase` CLI configured, inspect existing
+  tables before altering anything, and prefer additive migrations.
+- **Real model calls**: `orchestrate` runs six sequential Claude API calls (Research → Finance →
+  Operations → Risk & Compliance → Strategy → Executive Writer), each reading the prior agents'
+  real output. `verify_jwt: false` is required on `orchestrate` — don't change it.
+
+## Design system
+
+Dark "governance terminal" console — sharp corners, monospace-forward labels, one amber accent
+color, IBM Plex Mono/Sans/Serif (loaded via Google Fonts, not a default sans stack). The Command
+Center's deliverable and Governance Snapshot's export switch to a cream-paper "official document"
+register with real serif prose — a deliberate contrast with the terminal. The `.stamp` component
+marks every real human governance decision (approve/reject, govern/kill, release) with a rotated
+ink-stamp mark and a one-time "stamp hitting paper" animation — not a colored pill. Keep new UI
+consistent with this; it's specific to what the product is, not decoration.
+
+## Migrations
+
+Write a new numbered file in `supabase/migrations/` (check the highest existing number first) and
+actually apply it to the live project — a local file with nothing applied, or an applied migration
+with no local file, are both a stale/incomplete state. Prefer plain nullable columns over enforced
+foreign keys where a table's primary key is composite (`agents`/`approvals` both use
+`(id, workspace_id)`) — this codebase already trusts several unenforced references
+(`orchestrate_runs.approval_id`), so match that convention rather than introducing a composite FK
+for a new one.
+
+## Verifying a change actually works
+
+Since there's no build step, the only reliable way to see a page render is a real browser against
+real (or stubbed) Supabase calls:
+
+1. Serve the prototype locally, e.g. `python3 -m http.server 8099` from `01-the-bet/prototype/`.
+2. If you don't want to hit the live Supabase project for a test (no network, want deterministic
+   fixture data, etc.), stub `window.supabase` before the page's own scripts run — e.g. via
+   Playwright's `page.addInitScript`. Two gotchas that have cost real debugging time on this
+   project:
+   - Pass fixtures/session as **one** combined object argument — `addInitScript(fn, arg)` only
+     accepts a single arg, and passing several silently drops everything after the first.
+   - The stub's `auth.onAuthStateChange` callback must actually be **invoked** (e.g. via
+     `setTimeout(() => cb('INITIAL_SESSION', session), 0)`) — `data.js`'s `ready` promise only
+     resolves once that fires, so a stub that registers the callback without calling it hangs
+     every page's `loadState()` forever with no error.
+3. To exercise real-workspace (non-demo) code paths, the stub also needs a `workspace_members`
+   fixture row and a non-null fake session — several features (Workflow History, Model Spend's
+   real-agent-rows table, Governance Snapshot's plan/spend strip) render nothing in demo/anonymous
+   mode, which can look like a bug in the app when it's actually the test session being anonymous.
+4. Check actual rendered DOM state, not just the absence of console errors — several real bugs
+   this project has hit only showed up as wrong/missing content, not exceptions.
+
+## Git workflow
+
+This repo squash-merges PRs. That means a long-lived feature branch goes stale against
+`origin/main` the moment its own prior PR merges — the branch's local history still has the
+pre-squash commit, which diverges from the new squashed commit on `main` even though the tree
+content is identical. Before committing new work, rebuild the branch on `origin/main`'s current
+tip rather than the branch's own stale remote — building on the branch's own stale tip has caused
+a real merge conflict in the past despite identical tree content.
+
+Before opening a PR, check for a template (none exists in this repo as of writing). After merging,
+diffing `origin/main`'s last commit against the PR's own file list is a good final sanity check.
+
+Only commit, push, or open/merge a PR when the user has actually asked for it or approved the
+specific plan — don't take that step on your own initiative mid-task.
+
+## Docs stay current
+
+`01-the-bet/prototype/USER_GUIDE.md` is a living doc — every change that changes what a user sees
+or does should update it in the *same* change, not as a separate later pass. It went stale for a
+stretch of several features before this discipline was written down; don't let that repeat. The
+root `README.md` and `01-the-bet/prototype.md` carry the strategic/pitch framing and get updated
+for real capability additions (new backend features), not for UI/navigation polish — use judgment
+on which doc a given change belongs in.
